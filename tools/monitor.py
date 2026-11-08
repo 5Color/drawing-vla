@@ -1,19 +1,27 @@
-"""Supabase / SQLite 실시간 모니터 — 대시보드 카드·도안별 달성도 및 품질 게이지·최신 제출 실시간 모니터링.
+"""Supabase / SQLite 실시간 모니터 — 전문적인 TUI 대시보드 & 대화형 스크롤 로그 뷰어.
 
-  python tools/monitor.py                 기본 5초 주기, 최신 15건
-  python tools/monitor.py --interval 10 --limit 20
-  python tools/monitor.py --no-color      색 끄기 (로그로 남길 때)
-  python tools/monitor.py --sqlite outputs/local_bench.sqlite   (로컬 시뮬레이터)
-  python tools/monitor.py --once          1회 출력 후 종료
+  python tools/monitor.py                 기본 5초 자동 갱신, ↑/↓ 대화형 스크롤
+  python tools/monitor.py --interval 10   10초 갱신
+  python tools/monitor.py --no-color      ANSI 색상 끄기
+  python tools/monitor.py --sqlite outputs/local_bench.sqlite   (로컬 DB)
+  python tools/monitor.py --once          1회 출력 후 종료 (스크립트/파이프용)
 
-한글 및 전각 문자 폭을 엄밀하게 계산하여 어떤 터미널에서도 열 정렬이 어긋나지 않도록 처리합니다.
-접속 정보: SUPABASE_URL / SUPABASE_KEY 환경변수 또는 .collect-secrets.json
+단축키:
+  ↑ / k           1줄 위로 스크롤 (이전 기록)
+  ↓ / j           1줄 아래로 스크롤 (과거 기록)
+  PgUp / Space    반 페이지 스크롤
+  PgDn            반 페이지 아래로 스크롤
+  Home            맨 위(라이브 최신 기록)로 즉시 복귀
+  End             맨 아래(가장 오래된 기록)로 이동
+  r / R           즉시 새로고침
+  q / Q / ESC     종료
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import os
+import shutil
 import sys
 import time
 import unicodedata
@@ -23,14 +31,16 @@ import db as dbmod
 import scoring
 
 KST = dt.timezone(dt.timedelta(hours=9))
-COLS = ("nickname,contributor,template_name,score,tier,avg_error,input_type,is_qualified,created_at,"
-        "flags:trajectory_data->meta->flags,review:trajectory_data->meta->review")
-INPUT_LABELS = {"touch": "터치", "pen": "펜", "mouse": "마우스"}
+COLS = (
+    "nickname,contributor,template_name,score,tier,avg_error,input_type,is_qualified,created_at,"
+    "flags:trajectory_data->meta->flags,review:trajectory_data->meta->review"
+)
+INPUT_LABELS = {"touch": "touch", "pen": "pen", "mouse": "mouse"}
 FUNNEL_STEPS = (("visit", "방문"), ("start", "첫 획"), ("submit", "채점"), ("result", "결과"))
 AFTER_ACTIONS = (("retry", "다시"), ("next", "다음"), ("share", "공유"))
 EXTRA_EVENTS = (("card", "카드"), ("demo_done", "AI 시연 끝"), ("demo_skip", "시연 건너뜀"), ("hint_off", "안내 끔"))
 
-TARGET_DEMOS_GOAL = 30  # 도안별 목표 수집 시연 수 (CLAUDE.md 기준 30~50회)
+TARGET_DEMOS_GOAL = 30  # 도안별 목표 수집 시연 수
 USE_COLOR = True
 
 
@@ -87,16 +97,26 @@ def format_cell(s: str, width: int, right: bool = False) -> str:
     return pad_to(clipped, width, right=right)
 
 
+def center_cell(s: str, width: int) -> str:
+    """너비 안에서 가운데 정렬."""
+    sw = str_width(s)
+    if sw >= width:
+        return s
+    left = (width - sw) // 2
+    right = width - sw - left
+    return (" " * left) + s + (" " * right)
+
+
 # --- 게이지 바 생성 -----------------------------------------------------------
-def make_gauge_bar(ratio: float, length: int = 10) -> str:
-    """0.0~1.0 비율을 바탕으로 10칸 미니 게이지 바 생성."""
+def make_gauge_bar(ratio: float, length: int = 8) -> str:
+    """0.0~1.0 비율을 바탕으로 미니 게이지 바 생성."""
     ratio = max(0.0, min(1.0, ratio))
     filled = round(ratio * length)
     empty = length - filled
     return c("█" * filled, "32") + c("░" * empty, "90")
 
 
-def make_ratio_bar(qualified: int, total: int, length: int = 10) -> str:
+def make_ratio_bar(qualified: int, total: int, length: int = 8) -> str:
     """인정/미인정 비율 바."""
     if total <= 0:
         return c("░" * length, "90")
@@ -104,8 +124,8 @@ def make_ratio_bar(qualified: int, total: int, length: int = 10) -> str:
     return make_gauge_bar(rate, length)
 
 
-# --- 데이터 조회 및 가공 -------------------------------------------------------
-def recent_submissions(db, limit: int) -> list[dict]:
+# --- 데이터 조회 및 포맷팅 ---------------------------------------------------
+def recent_submissions(db, limit: int = 200) -> list[dict]:
     if isinstance(db, dbmod.SupabaseDB):
         res, _ = db._req("GET", "drawing_demos", {"select": COLS, "order": "created_at.desc", "limit": limit})
         return res or []
@@ -119,11 +139,14 @@ def recent_submissions(db, limit: int) -> list[dict]:
 
 
 def get_funnel_counts(db, day: str) -> dict[str, int]:
-    if isinstance(db, dbmod.SupabaseDB):
-        res, _ = db._req("GET", "funnel_counts", {"select": "event,n", "day": f"eq.{day}"})
-    else:
-        res = db._rows("select event, n from funnel_counts where day=?", (day,))
-    return {r["event"]: int(r["n"] or 0) for r in res or []}
+    try:
+        if isinstance(db, dbmod.SupabaseDB):
+            res, _ = db._req("GET", "funnel_counts", {"select": "event,n", "day": f"eq.{day}"})
+        else:
+            res = db._rows("select event, n from funnel_counts where day=?", (day,))
+        return {r["event"]: int(r["n"] or 0) for r in res or []}
+    except Exception:
+        return {}
 
 
 def parse_timestamp(v) -> dt.datetime | None:
@@ -134,27 +157,18 @@ def parse_timestamp(v) -> dt.datetime | None:
 
 
 def format_ago(t: dt.datetime | None, now: dt.datetime) -> str:
+    """영문 전문 스타일 상대 시간 (공백/한글 폭 깨짐 0%)."""
     if not t:
         return "-"
     sec = max(0, (now - t).total_seconds())
     if sec < 60:
-        return f"{int(sec)}초 전"
+        return f"{int(sec)}s ago"
     if sec < 3600:
-        return f"{int(sec // 60)}분 전"
+        return f"{int(sec // 60)}m ago"
     if sec < 86400:
-        return f"{sec / 3600:.1f}시간 전"
+        return f"{sec / 3600:.1f}h ago"
     days = int(sec // 86400)
-    return f"{days}일 전"
-
-
-def center_cell(s: str, width: int) -> str:
-    """너비 안에서 가운데 정렬."""
-    sw = str_width(s)
-    if sw >= width:
-        return s
-    left = (width - sw) // 2
-    right = width - sw - left
-    return (" " * left) + s + (" " * right)
+    return f"{days}d ago"
 
 
 def format_tier_badge(tier: str) -> str:
@@ -170,25 +184,111 @@ def format_tier_badge(tier: str) -> str:
 
 def format_status_badge(r: dict) -> str:
     if r.get("is_qualified"):
-        return c("[인정]", "1;32")
+        return c("[PASS]", "1;32")
     if r.get("flags"):
-        return c("[의심]", "1;97;41")
+        return c("[WARN]", "1;97;41")
     if r.get("review"):
-        return c("[검토대기]", "1;33")
-    return c("[미인정]", "90")
+        return c("[REVI]", "1;33")
+    return c("[FAIL]", "90")
 
 
 def pct_str(a: int, b: int) -> str:
     return f"{a / b:.0%}" if b else "-"
 
 
-# --- 렌더링 -------------------------------------------------------------------
-def render_screen(db, limit: int, interval: int, seen: set) -> str:
-    now = dt.datetime.now(KST)
-    counts = db.counts()
-    rows = recent_submissions(db, 300)
-    templates = scoring.load_templates()
-    template_labels = {k: v["label"] for k, v in templates.items()}
+# --- 키보드 입력 핸들러 (Cross-platform non-blocking) ------------------------
+def read_key() -> str | None:
+    if os.name == "nt":
+        import msvcrt
+        if not msvcrt.kbhit():
+            return None
+        ch = msvcrt.getch()
+        if ch in (b"\x00", b"\xe0"):
+            ch2 = msvcrt.getch()
+            mapping = {
+                b"H": "UP",
+                b"P": "DOWN",
+                b"I": "PGUP",
+                b"Q": "PGDN",
+                b"G": "HOME",
+                b"O": "END",
+            }
+            return mapping.get(ch2)
+        if ch in (b"q", b"Q", b"\x1b", b"\x03"):
+            return "QUIT"
+        if ch in (b"r", b"R"):
+            return "REFRESH"
+        if ch in (b"k", b"K"):
+            return "UP"
+        if ch in (b"j", b"J"):
+            return "DOWN"
+        if ch == b" ":
+            return "PGDN"
+        return None
+    else:
+        import select
+        r, _, _ = select.select([sys.stdin], [], [], 0)
+        if not r:
+            return None
+        ch = sys.stdin.read(1)
+        if ch in ("q", "Q", "\x03"):
+            return "QUIT"
+        if ch in ("r", "R"):
+            return "REFRESH"
+        if ch in ("k", "K"):
+            return "UP"
+        if ch in ("j", "J"):
+            return "DOWN"
+        if ch == "\x1b":
+            seq = sys.stdin.read(2)
+            if seq == "[A":
+                return "UP"
+            if seq == "[B":
+                return "DOWN"
+            if seq == "[5~":
+                return "PGUP"
+            if seq == "[6~":
+                return "PGDN"
+            if seq == "[H":
+                return "HOME"
+            if seq == "[F":
+                return "END"
+        return None
+
+
+# --- 대시보드 및 로그 렌더러 -------------------------------------------------
+class MonitorState:
+    def __init__(self, db, interval: int):
+        self.db = db
+        self.interval = interval
+        self.now = dt.datetime.now(KST)
+        self.counts = {}
+        self.rows = []
+        self.templates = scoring.load_templates()
+        self.template_labels = {k: v["label"] for k, v in self.templates.items()}
+        self.funnel_data = {}
+        self.seen = set()
+        self.scroll_offset = 0
+        self.last_fetch_time = 0.0
+        self.error_msg = None
+
+    def refresh_data(self):
+        try:
+            self.now = dt.datetime.now(KST)
+            self.counts = self.db.counts()
+            self.rows = recent_submissions(self.db, 250)
+            self.funnel_data = get_funnel_counts(self.db, self.now.date().isoformat())
+            self.error_msg = None
+            self.last_fetch_time = time.time()
+        except dbmod.DBError as e:
+            self.error_msg = str(e)
+
+
+def render_tui(state: MonitorState, term_cols: int, term_rows: int) -> list[str]:
+    now = state.now
+    counts = state.counts
+    rows = state.rows
+    dash_width = min(78, max(68, term_cols - 1))
 
     total_submissions = sum(v["total"] for v in counts.values())
     qualified_submissions = sum(v["qualified"] for v in counts.values())
@@ -204,67 +304,70 @@ def render_screen(db, limit: int, interval: int, seen: set) -> str:
     avg_score = (sum(r["score"] for r in public_recent) / len(public_recent)) if public_recent else 0.0
     needs_review = sum(1 for r in rows if not r.get("is_qualified") and (r.get("flags") or r.get("review")))
 
-    lines: list[str] = []
-    dash_width = 86
+    # 1. 상단 고정 대시보드 (Pinned Header)
+    top_lines: list[str] = []
 
-    # 1. 헤더 배너
+    # 헤더 배너
     title = " 🎨 DRAWING VLA BENCHMARK MONITOR "
-    status_info = f" {now:%Y-%m-%d %H:%M:%S} KST · {interval}초 갱신 · Ctrl+C 종료 "
+    status_info = f" {now:%Y-%m-%d %H:%M:%S} KST · {state.interval}s poll · ↑/↓ scroll "
     space = " " * max(1, dash_width - str_width(title) - str_width(status_info))
-    lines.append(c(title, "1;97;44") + space + c(status_info, "90"))
-    lines.append(c("═" * dash_width, "34"))
+    top_lines.append(c(title, "1;97;44") + space + c(status_info, "90"))
+    top_lines.append(c("═" * dash_width, "34"))
 
-    # 2. 요약 지표 카드 (2행 그리드)
     # 카드 1행: 전체 수집 현황 | 활동 지표
     tot_str = f"전체 {total_submissions:,}건  (인정 {qualified_submissions:,}건, {overall_qual_rate:.0%})"
     act_str = f"최근 1시간 {len(past_1h)}건  ·  오늘 참여자 {len(today_participants)}명"
-    lines.append(f"  {c('📊 총 수집:', '1')} {c(tot_str, '1;32')}" +
-                 " " * max(2, 46 - str_width(f"  📊 총 수집: {tot_str}")) +
-                 f"{c('⚡ 활성도:', '1')} {c(act_str, '1;36')}")
+    top_lines.append(
+        f"  {c('📊 총 수집:', '1')} {c(tot_str, '1;32')}"
+        + " " * max(2, 42 - str_width(f"  📊 총 수집: {tot_str}"))
+        + f"{c('⚡ 활성도:', '1')} {c(act_str, '1;36')}"
+    )
 
     # 카드 2행: 품질 지표 | 마지막 제출 / 알림
     avg_str = f"{avg_score:.1f}점 (최근 {len(public_recent)}건)"
     last_str = format_ago(last_time, now)
     rev_str = f"  {c('⚠️ 확인 필요 ' + str(needs_review) + '건 → tools/moderate.py', '1;97;43')}" if needs_review else ""
-    lines.append(f"  {c('🎯 공개 평균:', '1')} {c(avg_str, '1;33')}" +
-                 " " * max(2, 46 - str_width(f"  🎯 공개 평균: {avg_str}")) +
-                 f"{c('⏱️ 최근 제출:', '1')} {c(last_str, '1')}{rev_str}")
+    top_lines.append(
+        f"  {c('🎯 공개 평균:', '1')} {c(avg_str, '1;33')}"
+        + " " * max(2, 42 - str_width(f"  🎯 공개 평균: {avg_str}"))
+        + f"{c('⏱️ 최근 제출:', '1')} {c(last_str, '1')}{rev_str}"
+    )
 
-    # 3. 퍼널 지표
-    try:
-        funnel_data = get_funnel_counts(db, now.date().isoformat())
+    # 퍼널
+    if state.funnel_data:
         f_steps, prev_val = [], None
         for key, lbl in FUNNEL_STEPS:
-            val = funnel_data.get(key, 0)
+            val = state.funnel_data.get(key, 0)
             p_text = f" ({pct_str(val, prev_val)})" if prev_val is not None else ""
             f_steps.append(f"{lbl} {c(str(val), '1;36')}{p_text}")
             prev_val = val
-        res_val = funnel_data.get("result", 0)
-        after_parts = [f"{lbl} {c(str(funnel_data.get(k, 0)), '36')} ({pct_str(funnel_data.get(k, 0), res_val)})"
-                       for k, lbl in AFTER_ACTIONS]
-        extra_parts = " · ".join(f"{label} {funnel_data[k]}" for k, label in EXTRA_EVENTS if funnel_data.get(k))
+        res_val = state.funnel_data.get("result", 0)
+        after_parts = [
+            f"{lbl} {c(str(state.funnel_data.get(k, 0)), '36')} ({pct_str(state.funnel_data.get(k, 0), res_val)})"
+            for k, lbl in AFTER_ACTIONS
+        ]
+        extra_parts = " · ".join(f"{label} {state.funnel_data[k]}" for k, label in EXTRA_EVENTS if state.funnel_data.get(k))
         funnel_line_str = " → ".join(f_steps) + " → " + " · ".join(after_parts)
         if extra_parts:
             funnel_line_str += f"   [{extra_parts}]"
-        lines.append(f"  {c('오늘 퍼널:', '90')} {funnel_line_str}")
-    except Exception:
-        pass
+        top_lines.append(f"  {c('오늘 퍼널:', '90')} {funnel_line_str}")
 
-    lines.append(c("─" * dash_width, "90"))
+    top_lines.append(c("─" * dash_width, "90"))
 
-    # 4. 도안별 수집 달성도 및 품질 게이지 테이블
-    # 컬럼 정의: 도안(12)  수집수(7)  인정(7)  인정률(8)  품질게이지(12)  목표달성도(30개 기준)
-    lines.append(c(
-        f"  {format_cell('도안', 12)}  "
-        f"{format_cell('수집', 6, right=True)}  "
-        f"{format_cell('인정', 6, right=True)}  "
-        f"{format_cell('인정률', 7, right=True)}  "
-        f"{format_cell('품질(인정률)', 12)}  "
-        f"{format_cell('목표 달성도 (목표 30개)', 24)}",
-        "1;37"
-    ))
+    # 도안별 수집 현황 게이지
+    top_lines.append(
+        c(
+            f"  {format_cell('도안', 11)} "
+            f"{format_cell('수집', 5, right=True)} "
+            f"{format_cell('인정', 5, right=True)} "
+            f"{format_cell('인정률', 6, right=True)} "
+            f"{format_cell('품질', 8)} "
+            f"{format_cell('목표 달성도 (30개)', 20)}",
+            "1;37",
+        )
+    )
 
-    sorted_targets = sorted(template_labels.keys(), key=lambda t: -counts.get(t, {}).get("total", 0))
+    sorted_targets = sorted(state.template_labels.keys(), key=lambda t: -counts.get(t, {}).get("total", 0))
     for t_id in sorted_targets:
         c_info = counts.get(t_id, {"total": 0, "qualified": 0})
         tot = c_info["total"]
@@ -272,48 +375,54 @@ def render_screen(db, limit: int, interval: int, seen: set) -> str:
         rate_val = (qual / tot) if tot > 0 else 0.0
         rate_disp = f"{rate_val:.0%}" if tot > 0 else "-"
 
-        # 품질 게이지 (10칸)
-        q_bar = make_ratio_bar(qual, tot, length=10)
+        q_bar = make_ratio_bar(qual, tot, length=8)
 
-        # 목표 달성도 (30개 기준 진척 바)
         goal_ratio = min(1.0, tot / TARGET_DEMOS_GOAL)
-        goal_bar_len = 10
+        goal_bar_len = 8
         goal_filled = round(goal_ratio * goal_bar_len)
         goal_color = "1;32" if tot >= TARGET_DEMOS_GOAL else "33" if tot >= 15 else "90"
         goal_bar = c("━" * goal_filled, goal_color) + c("─" * (goal_bar_len - goal_filled), "90")
         goal_pct_disp = f"{tot}/{TARGET_DEMOS_GOAL} ({tot / TARGET_DEMOS_GOAL:.0%})"
 
-        t_name = template_labels.get(t_id, t_id)
-        lines.append(
-            f"  {format_cell(t_name, 12)}  "
-            f"{format_cell(str(tot), 6, right=True)}  "
-            f"{format_cell(str(qual), 6, right=True)}  "
-            f"{format_cell(rate_disp, 7, right=True)}  "
-            f"{q_bar}  "
+        t_name = state.template_labels.get(t_id, t_id)
+        top_lines.append(
+            f"  {format_cell(t_name, 11)} "
+            f"{format_cell(str(tot), 5, right=True)} "
+            f"{format_cell(str(qual), 5, right=True)} "
+            f"{format_cell(rate_disp, 6, right=True)} "
+            f"{q_bar} "
             f"[{goal_bar}] {c(goal_pct_disp, goal_color)}"
         )
 
-    lines.append(c("─" * dash_width, "90"))
+    top_lines.append(c("─" * dash_width, "90"))
 
-    # 5. 최신 제출 내역 테이블
-    # 컬럼 정의:
-    # [NEW](2)  시간(11)  닉네임(18)  도안(11)  점수(7)  티어(5)  오차(8)  입력(6)  상태(8)
+    # 2. 하단 스크롤 가능 로그 뷰포트 (Scrollable Log Viewport)
+    fixed_height = len(top_lines) + 3  # top + header + status bar + border
+    viewport_height = max(5, term_rows - fixed_height)
+
+    total_logs = len(rows)
+    # 스크롤 오프셋 경계 보정
+    max_offset = max(0, total_logs - viewport_height)
+    state.scroll_offset = max(0, min(state.scroll_offset, max_offset))
+
+    # 전문적인 영문 TUI 테이블 헤더
     header_line = (
-        f"  {format_cell('', 2)}  "
-        f"{format_cell('언제', 11)}  "
-        f"{format_cell('닉네임', 18)}  "
-        f"{format_cell('도안', 11)}  "
-        f"{format_cell('점수', 6, right=True)}  "
-        f"{center_cell('티어', 5)}  "
-        f"{format_cell('오차', 8, right=True)}  "
-        f"{format_cell('입력', 6)}  "
-        f"{format_cell('상태', 8)}"
+        f" {format_cell('', 1)} "
+        f"{format_cell('TIME', 8)} "
+        f"{format_cell('USER', 11)} "
+        f"{format_cell('TARGET', 11)} "
+        f"{format_cell('SCORE', 5, right=True)} "
+        f"{center_cell('TIER', 5)} "
+        f"{format_cell('ERROR', 8, right=True)} "
+        f"{format_cell('INPUT', 6)} "
+        f"{format_cell('STATUS', 6)}"
     )
-    lines.append(c(header_line, "1;37"))
+    log_lines = [c(header_line, "1;37")]
 
-    for r, t in times[:limit]:
+    visible_slice = times[state.scroll_offset : state.scroll_offset + viewport_height]
+    for r, t in visible_slice:
         key = (r.get("created_at"), r.get("nickname"))
-        is_new = bool(seen and key not in seen)
+        is_new = bool(state.seen and key not in state.seen)
 
         time_str = format_ago(t, now)
         raw_nick = str(r.get("nickname") or "익명")
@@ -325,7 +434,7 @@ def render_screen(db, limit: int, interval: int, seen: set) -> str:
             nick_plain = raw_nick
 
         t_code = r.get("template_name", "")
-        t_label = template_labels.get(t_code, t_code)
+        t_label = state.template_labels.get(t_code, t_code)
 
         sc = f"{r.get('score', 0.0):.1f}"
         tier_badge = format_tier_badge(r.get("tier", "C"))
@@ -337,11 +446,10 @@ def render_screen(db, limit: int, interval: int, seen: set) -> str:
         stat_badge = format_status_badge(r)
 
         star = c("★", "1;35") if is_new else " "
-        star_cell = f" {star}"
+        star_cell = f"{star}"
 
-        # ANSI 태그가 포함된 셀의 패딩 보정
-        nick_pad = " " * max(0, 18 - str_width(nick_plain))
-        nick_cell = clip_str(nick_plain, 18)
+        nick_pad = " " * max(0, 11 - str_width(nick_plain))
+        nick_cell = clip_str(nick_plain, 11)
         if r.get("contributor") and "(링크)" in nick_cell:
             nick_cell = nick_cell.replace("(링크)", c("(링크)", "36"))
         nick_cell = nick_cell + nick_pad
@@ -349,34 +457,44 @@ def render_screen(db, limit: int, interval: int, seen: set) -> str:
         tier_cell = center_cell(tier_badge, 5)
 
         data_row = (
-            f"  {star_cell}  "
-            f"{format_cell(time_str, 11)}  "
-            f"{nick_cell}  "
-            f"{format_cell(t_label, 11)}  "
-            f"{format_cell(sc, 6, right=True)}  "
-            f"{tier_cell}  "
-            f"{format_cell(err_str, 8, right=True)}  "
-            f"{format_cell(in_type, 6)}  "
+            f" {star_cell} "
+            f"{format_cell(time_str, 8)} "
+            f"{nick_cell} "
+            f"{format_cell(t_label, 11)} "
+            f"{format_cell(sc, 5, right=True)} "
+            f"{tier_cell} "
+            f"{format_cell(err_str, 8, right=True)} "
+            f"{format_cell(in_type, 6)} "
             f"{stat_badge}"
         )
-        lines.append(c(data_row, "1") if is_new else data_row)
+        log_lines.append(c(data_row, "1") if is_new else data_row)
 
-    if not rows:
-        lines.append(c("  (아직 기록된 시연이 없습니다)", "90"))
+    # 빈 줄 채우기 (높이 유지)
+    while len(log_lines) < viewport_height + 1:
+        log_lines.append(" ")
 
-    lines.append(c("═" * dash_width, "34"))
-    lines.append(c("  ★ = 신규 제출  │  품질 게이지: [██████░░░░] 인정률  │  목표: 30개 시연 기준 달성률", "90"))
+    # 3. 하단 상태 바 (Status Bar)
+    pos_start = state.scroll_offset + 1 if total_logs > 0 else 0
+    pos_end = min(state.scroll_offset + viewport_height, total_logs)
 
-    seen.clear()
-    seen.update((r.get("created_at"), r.get("nickname")) for r in rows[:limit])
-    return "\n".join(lines)
+    if state.scroll_offset == 0:
+        bar_text = f" [LIVE] Log {pos_start}-{pos_end}/{total_logs} │ ▲/▼: Scroll PgUp/Dn Home: Top R: Refresh Q: Quit "
+        bar_line = c(pad_to(bar_text, dash_width), "1;37;44")
+    else:
+        bar_text = f" [▲ PAST LOGS] {pos_start}-{pos_end}/{total_logs} (Home: Jump to Live) │ ▲/▼: Scroll Q: Quit "
+        bar_line = c(pad_to(bar_text, dash_width), "1;97;43")
+
+    state.seen.clear()
+    state.seen.update((r.get("created_at"), r.get("nickname")) for r in rows[:15])
+
+    all_lines = top_lines + log_lines + [bar_line]
+    return all_lines[:term_rows]
 
 
 def main() -> int:
     global USE_COLOR
-    ap = argparse.ArgumentParser(description="Supabase / SQLite 실시간 드로잉 벤치마크 모니터")
-    ap.add_argument("--interval", type=int, default=5, help="갱신 주기 (초, 기본 5초)")
-    ap.add_argument("--limit", type=int, default=15, help="표시할 최신 제출 수 (기본 15건)")
+    ap = argparse.ArgumentParser(description="Supabase / SQLite 실시간 대화형 TUI 모니터")
+    ap.add_argument("--interval", type=int, default=5, help="자동 갱신 주기 (초, 기본 5초)")
     ap.add_argument("--sqlite", help="로컬 SQLite DB 파일 경로 (예: outputs/local_bench.sqlite)")
     ap.add_argument("--once", action="store_true", help="1회만 출력하고 즉시 종료")
     ap.add_argument("--no-color", action="store_true", help="ANSI 색상 끄기")
@@ -398,51 +516,94 @@ def main() -> int:
         db = dbmod.SupabaseDB(url, key)
 
     if os.name == "nt":
-        os.system("")  # Windows 콘솔 가상 터미널 시퀀스 활성화
+        os.system("")  # Windows 가상 터미널 시퀀스 활성화
 
-    seen: set = set()
+    state = MonitorState(db, args.interval)
+    state.refresh_data()
 
     # 1회 출력 모드
     if args.once:
-        try:
-            screen = render_screen(db, args.limit, args.interval, seen)
-            print(screen)
-            return 0
-        except dbmod.DBError as e:
-            sys.exit(f"[DB 오류] {e}")
+        size = shutil.get_terminal_size((80, 32))
+        lines = render_tui(state, size.columns, size.lines)
+        print("\n".join(lines))
+        return 0
 
-    # 실시간 모니터링 모드 (플리커 없는 렌더링)
-    # 터미널 커서 숨김
+    # TUI 인터랙티브 모드
     if USE_COLOR:
-        sys.stdout.write("\x1b[?25l")
-        sys.stdout.write("\x1b[2J")  # 최초 1회 화면 클리어
+        sys.stdout.write("\x1b[?25l")  # 커서 숨김
+        sys.stdout.write("\x1b[2J")    # 전체 화면 클리어
         sys.stdout.flush()
+
+    need_redraw = True
 
     try:
         while True:
-            try:
-                screen = render_screen(db, args.limit, args.interval, seen)
-            except dbmod.DBError as e:
-                screen = f"[연결 오류] {e}  — {args.interval}초 뒤 재시도..."
+            cur_time = time.time()
+            size = shutil.get_terminal_size((80, 30))
 
-            # 줄별로 덮어쓰기 + 라인 끝 지우기 (\x1b[K)로 플리커 방지
-            out_buf = ["\x1b[H"]  # 커서 홈으로 이동
-            for line in screen.split("\n"):
-                out_buf.append(line + "\x1b[K\n")
-            sys.stdout.write("".join(out_buf))
-            sys.stdout.flush()
+            # 1. 주기적 백그라운드 데이터 갱신 (5초)
+            if cur_time - state.last_fetch_time >= state.interval:
+                state.refresh_data()
+                need_redraw = True
 
-            time.sleep(args.interval)
+            # 2. 키 입력 감지 (즉각적인 스크롤 반응)
+            key = read_key()
+            if key == "QUIT":
+                break
+            elif key == "REFRESH":
+                state.refresh_data()
+                need_redraw = True
+            elif key == "UP":
+                if state.scroll_offset > 0:
+                    state.scroll_offset -= 1
+                    need_redraw = True
+            elif key == "DOWN":
+                total_logs = len(state.rows)
+                fixed_h = 24
+                vp_h = max(5, size.lines - fixed_h)
+                if state.scroll_offset < max(0, total_logs - vp_h):
+                    state.scroll_offset += 1
+                    need_redraw = True
+            elif key == "PGUP":
+                state.scroll_offset = max(0, state.scroll_offset - 8)
+                need_redraw = True
+            elif key == "PGDN":
+                total_logs = len(state.rows)
+                fixed_h = 24
+                vp_h = max(5, size.lines - fixed_h)
+                state.scroll_offset = min(max(0, total_logs - vp_h), state.scroll_offset + 8)
+                need_redraw = True
+            elif key == "HOME":
+                if state.scroll_offset != 0:
+                    state.scroll_offset = 0
+                    need_redraw = True
+            elif key == "END":
+                total_logs = len(state.rows)
+                fixed_h = 24
+                vp_h = max(5, size.lines - fixed_h)
+                state.scroll_offset = max(0, total_logs - vp_h)
+                need_redraw = True
+
+            # 3. 화면 렌더링 (플리커 없음)
+            if need_redraw:
+                lines = render_tui(state, size.columns, size.lines)
+                out_buf = ["\x1b[H"]
+                for line in lines:
+                    out_buf.append(line + "\x1b[K\n")
+                sys.stdout.write("".join(out_buf))
+                sys.stdout.flush()
+                need_redraw = False
+
+            time.sleep(0.03)  # CPU 0% 유지 및 30fps 반응성
     except KeyboardInterrupt:
+        pass
+    finally:
         if USE_COLOR:
             sys.stdout.write("\x1b[?25h\n")  # 커서 복원
             sys.stdout.flush()
         print("[monitor] 모니터링이 안전하게 종료되었습니다.")
-        return 0
-    finally:
-        if USE_COLOR:
-            sys.stdout.write("\x1b[?25h")
-            sys.stdout.flush()
+
+    return 0
 
 
 if __name__ == "__main__":
