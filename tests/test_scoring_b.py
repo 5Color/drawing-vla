@@ -95,6 +95,17 @@ class TestBScoring(unittest.TestCase):
         for key in ("score", "f1", "f1_10", "f1_5", "coverage", "precision", "qualified"):
             self.assertEqual(forward[key], reverse[key], key)
 
+    def test_missing_part_fails_qualification_even_with_high_total_coverage(self):
+        # 3 parts: main body (80 pts), part2 (10 pts), part3 (10 pts)
+        p1 = tuple((0.2 + k * 0.004, 0.2) for k in range(80))
+        p2 = tuple((0.2 + k * 0.004, 0.4) for k in range(10))
+        p3 = tuple((0.2 + k * 0.004, 0.6) for k in range(10))
+        target = (p1, p2, p3)
+        # Draw p1 only (global cov = 80/100 = 80% >= 75%, but p2, p3 are 0% < 50%)
+        result = self.score_lines(target, (p1,))
+        self.assertFalse(result["qualified"])
+        self.assertIn("도안 일부 미완성", result["reason"])
+
     def test_empty_pen_up_and_dense_off_target_input_stays_bounded(self):
         for traj in ([], [[0.5, 0.5, 0]], [[0.0, 0.0, 1]] * 8000):
             with self.subTest(points=len(traj)):

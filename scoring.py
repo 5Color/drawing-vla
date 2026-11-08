@@ -29,6 +29,7 @@ QUALIFY_F1 = 0.70
 QUALIFY_SCORE = 70.0
 QUALIFY_COVERAGE = 0.75
 QUALIFY_PRECISION = 0.75
+QUALIFY_PART_COVERAGE = 0.50  # 여러 파트(몸통·꼭지·잎 등)로 이루어진 도안의 파트별 최소 채움률
 DRAW_CELL_CAP = 64      # avg_error 선분 격자 칸당 상한 (사람 최대 44)
 
 TIERS = [  # (최소 점수, 티어, 한국어 라벨, OG 이미지용 영어 라벨)
@@ -318,11 +319,23 @@ def score_trajectory(template: str, traj) -> dict:
     err = avg_error(parts, pen_down_runs(traj))
     tier, label, label_en = tier_for(score)
     max_strokes = 2 * len(parts) + 2
+
+    part_covs = []
+    if drawn:
+        g_draw = _Grid(drawn, TOL)
+        for part in parts:
+            part_covs.append(sum(g_draw.near(p) for p in part) / len(part) if part else 0.0)
+    else:
+        part_covs = [0.0] * len(parts)
+    min_part_cov = min(part_covs) if part_covs else 0.0
+
     reason = None
     if not 1 <= strokes <= max_strokes:
         reason = f"획 수 {strokes}개 (정상 1~{max_strokes}개)"
     elif cov < QUALIFY_COVERAGE:
         reason = f"도안 채움률 {int(QUALIFY_COVERAGE * 100)}% 미만"
+    elif len(parts) > 1 and min_part_cov < QUALIFY_PART_COVERAGE:
+        reason = f"도안 일부 미완성 (부위별 채움률 {int(min_part_cov * 100)}% < 50%)"
     elif prec < QUALIFY_PRECISION:
         reason = f"도안 정밀도 {int(QUALIFY_PRECISION * 100)}% 미만"
     elif score < QUALIFY_SCORE:
@@ -332,5 +345,5 @@ def score_trajectory(template: str, traj) -> dict:
     return {"score": score, "tier": tier, "tier_label": label, "tier_label_en": label_en,
             "score_version": SCORE_VERSION,
             "f1": round(f1_10, 4), "f1_10": round(f1_10, 4), "f1_5": round(f1_5, 4),
-            "coverage": round(cov, 4), "precision": round(prec, 4), "avg_error": err,
+            "coverage": round(cov, 4), "part_coverage": [round(c, 4) for c in part_covs], "precision": round(prec, 4), "avg_error": err,
             "strokes": strokes, "qualified": reason is None, "reason": reason}

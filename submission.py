@@ -56,7 +56,7 @@ PEAK_WINDOW_MS = 50
 MIN_RATE, MAX_RATE = 5, 2000   # 초당 점 수 (멈춘 채 누르고 있으면 점이 안 생김 ~ 1000Hz 마우스)
 MIN_AVG_ERROR_PX = 0.5        # 이보다 정확하면 사람 손으로 보기 어려움 (사람 최소 2.0px)
 MAX_TIME_REPAIR_MS = 500      # 이만큼까지 시간이 거꾸로 간 점은 고쳐서 받음 (Safari 이벤트 시각 섞임). 넘으면 의심
-REVIEW_AVG_ERROR_PX = 1.5     # 이보다 정확하면 '확인 후 리더보드에' (저장·점수는 그대로, 운영자가 승인)
+REVIEW_AVG_ERROR_PX = 0.8     # 이보다 정확하면 '확인 후 리더보드에' (사람 극한 1.0px, 0.8px 미만은 기계 정밀도 의심)
 HARD_FLAGS = frozenset({"too_fast_total", "speed_avg", "speed_peak", "sample_rate"})   # 봇이 분명 → meta만 저장
 SOFT_FLAGS = frozenset({"too_perfect", "time_backwards", "time_order"})                # 사람 오탐 가능 → 원시 기록 보존
 

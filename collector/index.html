@@ -1477,7 +1477,7 @@ async function saveEpisode() {
   renderCounts(result.counts, result.total);
   if (!result.hosted && DEV) showToast(`PC 저장 완료 → data/raw/${result.file}`, 'ok');
   if (result.score === undefined) { finishEpisode(); return; }
-  lastDrawing = { target: payload.meta.target, strokes: payload.strokes.map(s => s.points), input: payload.meta.input_type };
+  lastDrawing = { target: payload.meta.target, strokes: payload.strokes.map(s => s.points), input: payload.meta.input_type, duration_ms: payload.meta.duration_ms, draw_ms: result.draw_ms || payload.meta.duration_ms };
   showResult(result);
 }
 function finishEpisode() {
@@ -1561,13 +1561,17 @@ $('btnReplay').addEventListener('click', () => {
 });
 
 // 기록 미인정 사유를 쉬운 말로 (서버 사유: 70점 미만 / 채움률 75% 미만 / 정밀도 75% 미만 / 획 수 …)
-function friendlyReason(reason = '') {
+function friendlyReason(reason = '', r = null) {
+  const flags = (r && r.flags) || [];
+  if (flags.includes('too_fast_total')) return '도안을 거의 그리지 않았거나 너무 순식간에 끝났어요.';
+  if (flags.includes('speed_avg') || flags.includes('speed_peak')) return '너무 빠르게 그렸어요. 가이드선을 따라 천천히 그려보세요.';
   if (reason.startsWith('70점 미만')) return '점수가 70점(B급) 미만이에요.';
+  if (reason.includes('미완성') || reason.includes('부위')) return '도안의 일부(꼭지·잎·수염 등)를 덜 그렸어요. 도안을 빠짐없이 완성해 주세요.';
   if (reason.includes('채움률')) return '도안을 덜 그렸어요 (채움률 75% 이상 필요).';
   if (reason.includes('정밀도')) return '도안 바깥에 낙서나 글씨가 있어요 (정밀도 75% 이상 필요).';
   if (reason.startsWith('F1') || reason.includes('일치도')) return '도안 일치도가 70% 미만이에요.';
   if (reason.startsWith('획 수')) return '선을 너무 잘게 끊어 그렸어요.';
-  if (reason.startsWith('검증')) return '사람 손으로 그린 선인지 확인되지 않았어요.';
+  if (reason.startsWith('검증') || reason.includes('사람 손')) return '사람 손으로 직접 그린 선인지 확인되지 않았어요.';
   return reason ? `${reason}.` : '';
 }
 function recordBadge() {   // 결과 창 '신기록!' 표시 (픽셀 왕관)
@@ -1605,18 +1609,20 @@ function showResult(r) {
   $('rCov').textContent = pct(r.coverage);
   $('rErr').textContent = errText(r.avg_error);
   const q = $('rQual');
+  const durSec = ((r.draw_ms || (lastDrawing && (lastDrawing.draw_ms || lastDrawing.duration_ms)) || 0) / 1000).toFixed(1);
+  const durTag = durSec > 0 ? ` · ⏱ ${durSec}초` : '';
   if (r.qualified) {
     q.className = 'qual yes';
     // 신기록이면 '순위에 올라갔어요'·도안 이름을 빼고 배지를 붙인다 (휴대폰 결과 창이 한 줄 · 한 화면에 들어가게)
-    q.innerHTML = isRecord ? `${pxSvg('check', 'ok')} 기록 인정!` + (r.rank ? ` · ${rankText(r)}` : '')
-      : `${pxSvg('check', 'ok')} 기록 인정! 순위에 올라갔어요` + (r.rank ? ` · ${TEMPLATES[key].label} ${rankText(r)}` : '');
+    q.innerHTML = isRecord ? `${pxSvg('check', 'ok')} 기록 인정!${durTag}` + (r.rank ? ` · ${rankText(r)}` : '')
+      : `${pxSvg('check', 'ok')} 기록 인정!${durTag} 순위에 올라갔어요` + (r.rank ? ` · ${TEMPLATES[key].label} ${rankText(r)}` : '');
   } else if (r.review) {   // 사람 기록보다 훨씬 정밀 → 운영자 확인 후 리더보드에
     q.className = 'qual yes';
-    q.innerHTML = isRecord ? `${pxSvg('search')} 정밀 기록! 확인 후 순위에 올라요`   // 신기록 배지와 한 줄에
-      : `${pxSvg('search')} 엄청 정밀한 기록이에요! 확인을 거쳐 곧 순위에 올라가요`;
+    q.innerHTML = isRecord ? `${pxSvg('search')} 정밀 기록!${durTag} 확인 후 순위에 올라요`   // 신기록 배지와 한 줄에
+      : `${pxSvg('search')} 엄청 정밀한 기록이에요!${durTag} 확인을 거쳐 곧 순위에 올라가요`;
   } else {
     q.className = 'qual no';
-    q.textContent = `기록 미인정: ${friendlyReason(r.reason)} 가이드선을 따라 천천히 다시 도전해 보세요!`;
+    q.textContent = `기록 미인정${durSec > 0 ? ' (' + durSec + '초)' : ''}: ${friendlyReason(r.reason, r)} 가이드선을 따라 천천히 다시 도전해 보세요!`;
   }
   if (isRecord) q.append(' ', recordBadge());
   renderRecords(); renderTemplateInfo();
@@ -1703,7 +1709,9 @@ function drawShareCard(cv, r, d) {
   drawDrawing(c, 250, 320, 580, d.target, d.strokes, col, 9);
   c.fillStyle = '#8d99a8'; c.font = `500 24px ${FONT}`; c.textAlign = 'center';
   c.fillText(`일치도(10px) ${pct(r.f1_10 ?? r.f1)} · 일치도(5px) ${pct(r.f1_5)}`, W / 2, 912);
-  c.fillText(`채움률 ${pct(r.coverage)} · 평균 오차 ${errText(r.avg_error)}`, W / 2, 948);
+  const _sec = ((r.draw_ms || (d && (d.draw_ms || d.duration_ms)) || 0) / 1000).toFixed(1);
+  const _timeTxt = _sec > 0 ? ` · 시간 ${_sec}초` : '';
+  c.fillText(`채움률 ${pct(r.coverage)} · 평균 오차 ${errText(r.avg_error)}${_timeTxt}`, W / 2, 948);
   // 아래: 워터마크
   c.fillStyle = col; c.fillRect(0, 972, W, 108);
   c.fillStyle = '#0b0f14'; c.font = `900 42px ${FONT}`;

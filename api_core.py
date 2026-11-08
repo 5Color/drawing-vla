@@ -343,7 +343,7 @@ def save(headers, body: bytes, peer: str | None = None) -> Response:
                            "error": "이미 저장된 그림이에요. 새로 그려 주세요"})
 
     out = {"ok": True, "hosted": True, "id": row_id, "nickname": nickname, "contributor": who,
-           "input_type": input_type, "template": target, **sc, "review": review, "ticket": sub.issue_ticket(_secret()),
+           "input_type": input_type, "template": target, **sc, "draw_ms": measures.get("draw_ms", 0), "flags": flags, "review": review, "ticket": sub.issue_ticket(_secret()),
            "share_url": f"{site_url(headers)}/s?score={sc['score']:.1f}&tier={sc['tier']}&template={target}"}
     f_rank = _pool.submit(db.rank_of, target, sc["score"], sc["avg_error"]) if sc["qualified"] else None
     f_counts = _pool.submit(db.counts)

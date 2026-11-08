@@ -442,7 +442,7 @@ class TestApi(unittest.TestCase):
         for part in parts:   # 도안을 3px 정도만 흔들며 사람 속도로 → 오차 0.5~1.5px
             pts = []
             for k, (x, y) in enumerate(part):
-                pts.append([x + 0.006 * ((k // 7) % 2), y, round(t, 2), 0.5]); t += 8.0   # 오차 약 0.9px
+                pts.append([x + 0.004 * ((k // 7) % 2), y, round(t, 2), 0.5]); t += 8.0   # 오차 약 0.63px (0.5~0.8px 검토 대기)
             strokes.append({"pointer_type": "pen", "points": pts}); t += 300
         p = self.public("정밀왕")
         p["strokes"] = strokes
