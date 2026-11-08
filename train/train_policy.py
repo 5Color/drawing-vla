@@ -151,18 +151,20 @@ def make_batch(d: dict[str, torch.Tensor], idx: torch.Tensor):
 # 평가: 학습 손실(헤드별) + 실제 예측(디퓨전은 샘플링)으로 좌표 오차·펜 정확도
 # ---------------------------------------------------------------------------
 @torch.no_grad()
-def val_loss(model, d, idx: torch.Tensor, bs: int = 512) -> float:
+def val_loss(model, d, idx: torch.Tensor, bs: int = 128) -> float:
     model.eval()
     tot = torch.zeros((), device=idx.device)
     for s in range(0, len(idx), bs):
         b = idx[s:s + bs]
         obs, state, action = make_batch(d, b)
         tot += model.loss(obs, state, action)[0] * len(b)
+        if idx.device.type == "xpu":
+            torch.xpu.synchronize()
     return tot.item() / len(idx)
 
 
 @torch.no_grad()
-def val_predict(model, d, idx: torch.Tensor, bs: int = 512) -> dict:
+def val_predict(model, d, idx: torch.Tensor, bs: int = 128) -> dict:
     model.eval()
     dev = idx.device
     acc = {k: torch.zeros((), device=dev) for k in ("xy", "pen_ok", "up_hit", "up_n", "first")}
@@ -176,6 +178,8 @@ def val_predict(model, d, idx: torch.Tensor, bs: int = 512) -> dict:
         acc["up_hit"] += ((pen_prob <= 0.5) & up).sum()
         acc["up_n"] += up.sum()
         acc["first"] += (xy[:, 0] - action[:, 0, :2]).norm(dim=-1).sum() * PX
+        if dev.type == "xpu":
+            torch.xpu.synchronize()
     v = {k: t.item() for k, t in acc.items()}
     N = len(idx)
     return {"xy": v["xy"] / N, "pen_acc": v["pen_ok"] / N, "pen_up_recall": v["up_hit"] / max(1, v["up_n"]),
@@ -267,9 +271,10 @@ def main() -> int:
     train_idx, val_idx = np.flatnonzero(~is_val), np.flatnonzero(is_val)
     d = to_device(arr, dev)
     val_idx_t = torch.from_numpy(val_idx).to(dev)
-    # 디퓨전 샘플링 검증은 비용이 커서 고정된 1024개 부분집합으로
-    pred_idx_t = val_idx_t if not diffusion else torch.from_numpy(
-        np.sort(np.random.default_rng(0).choice(val_idx, min(1024, len(val_idx)), replace=False))).to(dev)
+    # 디퓨전·트랜스포머 검증은 비용이 커서 고정된 1024개 부분집합으로
+    subsample_val = diffusion or args.head == "transformer"
+    pred_idx_t = torch.from_numpy(
+        np.sort(np.random.default_rng(0).choice(val_idx, min(1024, len(val_idx)), replace=False))).to(dev) if subsample_val else val_idx_t
     print(f"[data] 샘플 train {len(train_idx)} / val {len(val_idx)}  (에폭당 train {len(train_idx) // args.stride}개,"
           f" stride {args.stride}) · 펜 업 비율 {1 - arr['act'][..., 2].mean():.1%}", flush=True)
 
@@ -334,6 +339,8 @@ def main() -> int:
             opt.step()
             sched.step()
             step += 1
+            if dev.type == 'xpu' and step % 20 == 0:
+                torch.xpu.synchronize()
             if ema is not None:  # 지수 이동 평균 가중치 (디퓨전 샘플 품질 안정화)
                 decay = min(0.999, (1 + step) / (10 + step))
                 with torch.no_grad():
@@ -350,6 +357,8 @@ def main() -> int:
         if not diffusion or epoch % args.eval_every == 0 or epoch == args.epochs:
             va.update(val_predict(net, d, pred_idx_t))
         sync(dev)
+        if dev.type == 'xpu':
+            torch.xpu.empty_cache()
         dt = time.perf_counter() - t_ep
         # 체크포인트 기준: mlp = 검증 손실, diffusion = 샘플링한 청크의 좌표 오차
         score = va.get("xy", float("inf")) if diffusion else va["loss"]
