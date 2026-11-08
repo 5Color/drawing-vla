@@ -305,7 +305,7 @@ class SupabaseDB:
 
     def list_qualified(self, offset: int = 0, limit: int = 100) -> list[dict]:
         res, _ = self._req("GET", "drawing_demos", {
-            "select": "id,nickname,contributor,template_name,score,f1,precision,created_at,trajectory_data",
+            "select": "id,nickname,contributor,template_name,score,f1,precision,coverage,created_at,trajectory_data",
             "is_qualified": "eq.true", "order": "created_at.asc,id.asc", "offset": offset, "limit": limit})
         return res or []
 
@@ -487,7 +487,7 @@ class SqliteDB:
             "select template_name, count(*) total, sum(is_qualified) qualified from drawing_demos group by template_name")}
 
     def list_qualified(self, offset: int = 0, limit: int = 100) -> list[dict]:
-        rows = self._rows("select id, nickname, contributor, template_name, score, f1, precision, created_at, trajectory_data "
+        rows = self._rows("select id, nickname, contributor, template_name, score, f1, precision, coverage, created_at, trajectory_data "
                           "from drawing_demos where is_qualified=1 order by created_at, id limit ? offset ?", (limit, offset))
         for r in rows:
             r["trajectory_data"] = json.loads(r["trajectory_data"])

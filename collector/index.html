@@ -466,7 +466,7 @@
       <div><dt>채움률 <small>Coverage</small></dt><dd id="rCov">–</dd></div>
       <div title="도안 선과 내 선 사이의 평균 거리. 점수가 같으면 이 값이 작은 사람이 위예요"><dt>평균 오차 <small>Error</small></dt><dd id="rErr">–</dd><span class="note">(동점 시 우선)</span></div>
     </dl>
-    <p class="hint">점수는 두 일치도의 평균입니다. 기록 인정은 10px 일치도 70%를 기준으로 합니다.</p>
+    <p class="hint">점수는 두 일치도의 평균입니다. 기록 인정은 70점(B급) 이상, 도안 채움률·정밀도 75% 이상을 기준으로 합니다.</p>
     <p class="qual" id="rQual"></p>
     <button class="btn primary" id="btnRetry" type="button" hidden>다시 도전하기</button>
     <div class="row">
@@ -1549,9 +1549,12 @@ $('btnReplay').addEventListener('click', () => {
   playVs(r.template, lastDrawing.strokes, TIER_COLOR[r.tier], ai ? ai.traj : null);
 });
 
-// 기록 미인정 사유를 쉬운 말로 (서버 사유: 'F1 70% 미만' / '획 수 N개 (정상 …)')
+// 기록 미인정 사유를 쉬운 말로 (서버 사유: 70점 미만 / 채움률 75% 미만 / 정밀도 75% 미만 / 획 수 …)
 function friendlyReason(reason = '') {
-  if (reason.startsWith('F1')) return '10px 일치도가 70% 미만이에요.';
+  if (reason.startsWith('70점 미만')) return '점수가 70점(B급) 미만이에요.';
+  if (reason.includes('채움률')) return '도안을 덜 그렸어요 (채움률 75% 이상 필요).';
+  if (reason.includes('정밀도')) return '도안 바깥에 낙서나 글씨가 있어요 (정밀도 75% 이상 필요).';
+  if (reason.startsWith('F1') || reason.includes('일치도')) return '도안 일치도가 70% 미만이에요.';
   if (reason.startsWith('획 수')) return '선을 너무 잘게 끊어 그렸어요.';
   if (reason.startsWith('검증')) return '사람 손으로 그린 선인지 확인되지 않았어요.';
   return reason ? `${reason}.` : '';

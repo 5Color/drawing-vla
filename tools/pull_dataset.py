@@ -45,6 +45,8 @@ def main() -> int:
     ap.add_argument("--no-check", action="store_true")
     ap.add_argument("--min-f1", type=float, default=0.85, help="학습에 쓸 최소 F1 (기본 0.85)")
     ap.add_argument("--min-precision", type=float, default=0.85, help="학습에 쓸 최소 선 정밀도 (기본 0.85)")
+    ap.add_argument("--min-coverage", type=float, default=0.85, help="학습에 쓸 최소 도안 채움률 (기본 0.85)")
+    ap.add_argument("--min-score", type=float, default=70.0, help="학습에 쓸 최소 점수 (기본 70.0)")
     ap.add_argument("--trusted-only", action="store_true", help="개인 링크 참여자 시연만")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
@@ -72,8 +74,16 @@ def main() -> int:
         offset += len(rows)
         for row in rows:
             payload = row["trajectory_data"]
+            sc_meta = (payload.get("meta") or {}).get("score") or {}
+            f1_val = row.get("f1") if row.get("f1") is not None else sc_meta.get("f1_10", sc_meta.get("f1", 0))
+            prec_val = row.get("precision") if row.get("precision") is not None else sc_meta.get("precision", 0)
+            cov_val = row.get("coverage") if row.get("coverage") is not None else sc_meta.get("coverage", 0)
+            score_val = row.get("score") if row.get("score") is not None else sc_meta.get("score", 0)
             if (args.trusted_only and not row.get("contributor")) or \
-                    (row.get("f1") or 0) < args.min_f1 or (row.get("precision") or 0) < args.min_precision:
+                    f1_val < args.min_f1 or \
+                    prec_val < args.min_precision or \
+                    cov_val < args.min_coverage or \
+                    score_val < args.min_score:
                 low += 1
                 continue
             seed = (payload.get("meta") or {}).get("seeded_from")   # seed_supabase.py로 올린 로컬 원본

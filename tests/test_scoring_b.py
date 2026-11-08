@@ -38,7 +38,7 @@ class TestBScoring(unittest.TestCase):
                 self.assertEqual(result["score_version"], "b-v1")
                 self.assertTrue(result["qualified"])
 
-    def test_between_tolerances_lowers_score_but_stays_qualified(self):
+    def test_between_tolerances_lowers_score_and_fails_qualification(self):
         target = horizontal_parts(0.5)
         # 0.015 = 7.68px: every point passes nominal 10px and fails nominal 5px.
         result = self.score_lines(target, horizontal_parts(0.515))
@@ -46,8 +46,21 @@ class TestBScoring(unittest.TestCase):
         self.assertEqual((result["f1_10"], result["f1_5"]), (1.0, 0.0))
         self.assertEqual((result["f1"], result["coverage"], result["precision"]), (1.0, 1.0, 1.0))
         self.assertEqual(result["avg_error"], 7.68)
-        self.assertTrue(result["qualified"])
-        self.assertIsNone(result["reason"])
+        self.assertFalse(result["qualified"])
+        self.assertEqual(result["reason"], "70점 미만")
+
+    def test_low_coverage_and_low_precision_fail_qualification(self):
+        target = horizontal_parts(0.25, 0.5, 0.75, 0.85)
+        # Draw only 2 of 4 lines (coverage ~ 50% < 75%)
+        low_cov = self.score_lines(target, horizontal_parts(0.25, 0.5))
+        self.assertFalse(low_cov["qualified"])
+        self.assertEqual(low_cov["reason"], "도안 채움률 75% 미만")
+
+        # Draw 1 target line + 2 extra doodle lines outside (precision ~ 33% < 75%)
+        one_target = horizontal_parts(0.5)
+        low_prec = self.score_lines(one_target, horizontal_parts(0.5, 0.1, 0.9))
+        self.assertFalse(low_prec["qualified"])
+        self.assertEqual(low_prec["reason"], "도안 정밀도 75% 미만")
 
     def test_partial_narrow_agreement_uses_arithmetic_mean_and_truncation(self):
         target = horizontal_parts(0.25, 0.5, 0.75)
