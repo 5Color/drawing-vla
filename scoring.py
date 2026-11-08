@@ -308,6 +308,30 @@ def _agreement(tpts, drawn, tol: float) -> tuple[float, float, float]:
     return cov, prec, f1
 
 
+def shape_similarity(tpts: list[tuple[float, float]], drawn: list[tuple[float, float]]) -> tuple[float, float, float]:
+    """도안과 그린 선의 중심/스케일을 정규화하여 형태 자체의 일치도를 측정 (자유 드로잉 형태 평가)."""
+    if not drawn or not tpts:
+        return 0.0, 0.0, 0.0
+    dxs, dys = [p[0] for p in drawn], [p[1] for p in drawn]
+    txs, tys = [p[0] for p in tpts], [p[1] for p in tpts]
+
+    dw, dh = max(dxs) - min(dxs), max(dys) - min(dys)
+    tw, th = max(txs) - min(txs), max(tys) - min(tys)
+
+    if dw < 0.08 or dh < 0.08 or tw < 0.05 or th < 0.05:
+        return 0.0, 0.0, 0.0
+
+    aspect_ratio = (dw / dh) / (tw / th) if dh > 0 and th > 0 else 1.0
+    if not (0.45 <= aspect_ratio <= 2.2):
+        return 0.0, 0.0, 0.0
+
+    dcx, dcy = (min(dxs) + max(dxs)) / 2, (min(dys) + max(dys)) / 2
+    tcx, tcy = (min(txs) + max(txs)) / 2, (min(tys) + max(tys)) / 2
+    scale = (tw / dw + th / dh) / 2
+    aligned = [(tcx + (x - dcx) * scale, tcy + (y - dcy) * scale) for x, y in drawn]
+    return _agreement(tpts, aligned, TOL * 1.5)
+
+
 def score_trajectory(template: str, traj) -> dict:
     parts = template_parts(template)
     tpts = [p for part in parts for p in part]
@@ -317,7 +341,6 @@ def score_trajectory(template: str, traj) -> dict:
     _, _, f1_5 = _agreement(tpts, drawn, NARROW_TOL)
     score = to_score((f1_10 + f1_5) / 2)
     err = avg_error(parts, pen_down_runs(traj))
-    tier, label, label_en = tier_for(score)
     max_strokes = 2 * len(parts) + 2
 
     part_covs = []
@@ -329,21 +352,43 @@ def score_trajectory(template: str, traj) -> dict:
         part_covs = [0.0] * len(parts)
     min_part_cov = min(part_covs) if part_covs else 0.0
 
+    # 형태 유사도 측정 (가이드선과 크기/위치가 살짝 달라도 형태가 예쁘면 구제)
+    s_cov, s_prec, s_f1 = shape_similarity(tpts, drawn)
+    is_freestyle_qualified = (
+        s_f1 >= 0.70
+        and cov >= 0.40
+        and prec >= 0.40
+        and (len(parts) <= 1 or min_part_cov >= 0.30)
+        and (1 <= strokes <= max_strokes)
+    )
+
     reason = None
     if not 1 <= strokes <= max_strokes:
         reason = f"획 수 {strokes}개 (정상 1~{max_strokes}개)"
     elif cov < QUALIFY_COVERAGE:
-        reason = f"도안 채움률 {int(QUALIFY_COVERAGE * 100)}% 미만"
+        if not is_freestyle_qualified:
+            reason = f"도안 채움률 {int(QUALIFY_COVERAGE * 100)}% 미만"
     elif len(parts) > 1 and min_part_cov < QUALIFY_PART_COVERAGE:
-        reason = f"도안 일부 미완성 (부위별 채움률 {int(min_part_cov * 100)}% < 50%)"
+        if not is_freestyle_qualified:
+            reason = f"도안 일부 미완성 (부위별 채움률 {int(min_part_cov * 100)}% < 50%)"
     elif prec < QUALIFY_PRECISION:
-        reason = f"도안 정밀도 {int(QUALIFY_PRECISION * 100)}% 미만"
+        if not is_freestyle_qualified:
+            reason = f"도안 정밀도 {int(QUALIFY_PRECISION * 100)}% 미만"
     elif score < QUALIFY_SCORE:
-        reason = f"{int(QUALIFY_SCORE)}점 미만"
+        if not is_freestyle_qualified:
+            reason = f"{int(QUALIFY_SCORE)}점 미만"
     elif f1_10 < QUALIFY_F1:
-        reason = f"10px 일치도 {int(QUALIFY_F1 * 100)}% 미만"
+        if not is_freestyle_qualified:
+            reason = f"10px 일치도 {int(QUALIFY_F1 * 100)}% 미만"
+
+    # 자유 예술가 구제 시 점수/티어 보정
+    if is_freestyle_qualified and score < 70.0:
+        score = max(score, round(s_f1 * 80.0, 1))
+
+    tier, label, label_en = tier_for(score)
     return {"score": score, "tier": tier, "tier_label": label, "tier_label_en": label_en,
             "score_version": SCORE_VERSION,
             "f1": round(f1_10, 4), "f1_10": round(f1_10, 4), "f1_5": round(f1_5, 4),
             "coverage": round(cov, 4), "part_coverage": [round(c, 4) for c in part_covs], "precision": round(prec, 4), "avg_error": err,
+            "shape_f1": round(s_f1, 4),
             "strokes": strokes, "qualified": reason is None, "reason": reason}
