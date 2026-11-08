@@ -117,6 +117,15 @@
     .stage { padding: 8px; }
   }
 
+  @media (orientation: portrait) and (max-height: 750px) {
+    .top { padding: 6px max(12px, calc((100% - 640px) / 2)) 4px; gap: 4px; }
+    .top .welcome { display: none; }
+    .top .nudge { font-size: 11px; margin: 0; }
+    .top select { min-height: 36px; font-size: 13px; }
+    .actions { padding: 6px max(12px, calc((100% - 640px) / 2)); }
+    .actions .btn { min-height: 44px; }
+  }
+
   .board {
     position: relative; width: 320px; height: 320px;
     background: #000; border-radius: 8px; overflow: hidden;
@@ -178,8 +187,9 @@
   .nudge { margin: 0; padding: 2px 4px; color: var(--muted); font-size: 12.5px; line-height: 1.35; text-align: center; }
   .nudge b { color: var(--mark); }
   /* ---------- 모달 (닉네임 / 결과) ---------- */
+  body.modal-open { overflow: hidden; }
   .modal { position: fixed; inset: 0; z-index: 20; display: none; place-items: center; padding: 16px;
-           background: rgb(5 8 12 / .72); touch-action: manipulation; }
+           background: rgb(5 8 12 / .88); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); touch-action: manipulation; }
   .modal.open { display: grid; }
   .sheet { width: min(100%, 440px); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
            border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgb(0 0 0 / .6); }
@@ -1369,9 +1379,9 @@ function askNickname(msg = '') {
   return new Promise(resolve => {
     const m = $('nickModal');
     $('nickInput').value = nickname; $('nickErr').textContent = msg;
-    m.classList.add('open');
+    m.classList.add('open'); syncModalOpen();
     setTimeout(() => $('nickInput').focus(), 50);
-    const done = ok => { m.classList.remove('open'); $('nickOk').onclick = $('nickCancel').onclick = null; resolve(ok); };
+    const done = ok => { m.classList.remove('open'); syncModalOpen(); $('nickOk').onclick = $('nickCancel').onclick = null; resolve(ok); };
     $('nickCancel').onclick = () => done(false);
     $('nickOk').onclick = () => {
       const v = $('nickInput').value.trim().replace(/\s+/g, ' ');
@@ -1386,6 +1396,7 @@ $('nickInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('nick
 // ===== 저장 → 서버 채점 → 결과 창 =====
 let saving = false, forgetting = false, lastResult = null, lastDrawing = null;
 const modalOpen = () => document.querySelector('.modal.open') !== null;
+function syncModalOpen() { document.body.classList.toggle('modal-open', modalOpen()); }
 function setSaving(on) {
   saving = on;
   btnSave.disabled = btnClear.disabled = targetSel.disabled = $('btnDemo').disabled = on;
@@ -1616,7 +1627,7 @@ function showResult(r) {
   $('cardWrap').open = false;
   drawShareCard($('cardPreview'), r, lastDrawing);
   prepareShareFile(r);
-  $('resultModal').classList.add('open');
+  $('resultModal').classList.add('open'); syncModalOpen();
   if (hosted) {   // 저장 응답에 담긴 최신 리더보드 (CDN 캐시와 무관하게 방금 기록이 보임)
     lbInput.lbListModal = '';
     renderTabs($('lbTabsModal'), 'lbListModal', () => {
@@ -1756,12 +1767,12 @@ $('btnShare').addEventListener('click', () => {
     shareLink();
   }
 });
-$('btnNext').addEventListener('click', () => { Sound.tap(); beacon('next'); $('resultModal').classList.remove('open'); finishEpisode(); });
+$('btnNext').addEventListener('click', () => { Sound.tap(); beacon('next'); $('resultModal').classList.remove('open'); syncModalOpen(); finishEpisode(); });
 // 같은 도안을 바로 다시 (회차는 넘기되 도안은 그대로)
 $('btnRetry').addEventListener('click', () => {
   Sound.tap();
   beacon('retry');
-  $('resultModal').classList.remove('open');
+  $('resultModal').classList.remove('open'); syncModalOpen();
   episode += 1; store.set('episode', episode);
   resetEpisode();
 });
