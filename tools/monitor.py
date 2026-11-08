@@ -188,7 +188,7 @@ def format_status_badge(r: dict) -> str:
     if r.get("flags"):
         return c("[WARN]", "1;97;41")
     if r.get("review"):
-        return c("[REVI]", "1;33")
+        return c("[REVIEW]", "1;33")
     return c("[FAIL]", "90")
 
 
@@ -267,7 +267,9 @@ class MonitorState:
         self.templates = scoring.load_templates()
         self.template_labels = {k: v["label"] for k, v in self.templates.items()}
         self.funnel_data = {}
-        self.seen = set()
+        self.seen_keys = set()
+        self.new_keys = set()
+        self.is_first_fetch = True
         self.scroll_offset = 0
         self.last_fetch_time = 0.0
         self.error_msg = None
@@ -280,6 +282,15 @@ class MonitorState:
             self.funnel_data = get_funnel_counts(self.db, self.now.date().isoformat())
             self.error_msg = None
             self.last_fetch_time = time.time()
+
+            cur_keys = {(r.get("created_at"), r.get("nickname")) for r in self.rows}
+            if self.is_first_fetch:
+                self.seen_keys = cur_keys
+                self.new_keys = set()
+                self.is_first_fetch = False
+            else:
+                self.new_keys = cur_keys - self.seen_keys
+                self.seen_keys.update(cur_keys)
         except dbmod.DBError as e:
             self.error_msg = str(e)
 
@@ -422,7 +433,7 @@ def render_tui(state: MonitorState, term_cols: int, term_rows: int) -> list[str]
     visible_slice = times[state.scroll_offset : state.scroll_offset + viewport_height]
     for r, t in visible_slice:
         key = (r.get("created_at"), r.get("nickname"))
-        is_new = bool(state.seen and key not in state.seen)
+        is_new = bool(key in state.new_keys)
 
         time_str = format_ago(t, now)
         raw_nick = str(r.get("nickname") or "익명")
@@ -483,9 +494,6 @@ def render_tui(state: MonitorState, term_cols: int, term_rows: int) -> list[str]
     else:
         bar_text = f" [▲ PAST LOGS] {pos_start}-{pos_end}/{total_logs} (Home: Jump to Live) │ ▲/▼: Scroll Q: Quit "
         bar_line = c(pad_to(bar_text, dash_width), "1;97;43")
-
-    state.seen.clear()
-    state.seen.update((r.get("created_at"), r.get("nickname")) for r in rows[:15])
 
     all_lines = top_lines + log_lines + [bar_line]
     return all_lines[:term_rows]
