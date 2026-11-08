@@ -18,7 +18,7 @@
   "functions": {
     "api/*.py": {
       "includeFiles": "{collector/index.html,targets_128.json}",
-      "excludeFiles": "{outputs/**,data/**,train/**,tools/**,tests/**,database/**,backups/**,.vercel/**,.claude/**,server.py,*.md,.collect-secrets.json,.env*}",
+      "excludeFiles": "{outputs/**,data/**,train/**,tools/**,tests/**,database/**,backups/**,docs/**,.vercel/**,.claude/**,server.py,*.md,.collect-secrets.json,.env*}",
       "maxDuration": 10
     }
   },

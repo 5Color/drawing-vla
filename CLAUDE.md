@@ -6,6 +6,13 @@
 미래 16스텝 궤적을 예측하는 Action Chunking 정책(Diffusion Policy / ACT 계열)을 학습한다.
 목표 시연 수: 30~50회. 수집 기기: Lenovo Yoga Tab (TB710FU, 스타일러스), 터치스크린 노트북.
 
+## 제품 방향 (2026-11-08 최신 기준)
+최신 제품 비전은 [차세대 라이브 드로잉 AI 제품 기획서 및 비전 명세서](<docs/차세대 라이브 드로잉 AI 제품 기획서 및 비전 명세서.md>)를 참고한다. 제품 방향은 기존 `docs/hand_vs_ai.md`보다 이 문서를 우선한다.
+
+- **LiveSketch:** 카테고리·스타일·소품 태그와 선택적 텍스트 입력 → 10~15초 완전자율 라이브 드로잉 감상 → SVG·숏폼 영상 내보내기.
+- **Hand vs AI:** 사람의 좌표·시간·필압 시연을 수집하고 사람과 AI를 비교하는 데이터 수집·벤치마크 플랫폼.
+- 자연스러운 선화 궤적 엔진을 먼저 확보하고, 채색은 후속 단계의 별도 모듈로 확장한다. 문서의 목표·로드맵과 실제 구현 완료 상태는 구분한다.
+
 ## Architecture & Vision (2026-11-07 확정)
 **최종 목표: 로봇 팔이 아니라 디지털 캔버스 위의 '고속 자율 드로잉 VLA 에이전트'.**
 숙련된 일러스트레이터처럼 유려한 선 — 필압, 종 모양 가감속(bell-shaped velocity), 끝선 빼기(tapering)가 살아 있는
@@ -63,6 +70,9 @@ tools/moderate.py       # 리더보드 운영: TOP 10·검토 대기 보기, --a
 tools/seed_supabase.py  # 로컬 data/raw 검증 시연 → Supabase 초기 등록(닉네임 siat, meta.seeded_from로 중복 방지, --dry-run)
 tools/vercel_local.py   # 배포 환경 로컬 시뮬레이터 (SQLite, 127.0.0.1:8100)
 tests/test_benchmark.py # python -m unittest tests.test_benchmark
+docs/                  # 제품 기획서, 비전 명세서, 평가 보고서 (docs/README.md)
+tools/                  # CLI 도구 모음: 운영·백업·데이터셋·모니터링 (tools/README.md)
+tools/eval/             # AI 모델 롤아웃 후보군 비교·검증 도구
 data/raw/demo_*.json    # 시연 원본 (에피소드 1개 = 파일 1개). 결함 시연은 data/rejected/
 train/                  # dataset.py, check_demos.py, policies.py, train_policy.py, rollout_eval.py
 outputs/                # 체크포인트, 캐시, 롤아웃 GIF (재생성 가능)
@@ -73,10 +83,10 @@ outputs/                # 체크포인트, 캐시, 롤아웃 GIF (재생성 가�
 - 참여: 개인 링크 `/?u=<이름>&k=<HMAC(COLLECT_SECRET, 이름)>` 또는 공개 닉네임(`meta.nickname`, 한글 가능해서 헤더가 아닌 본문으로).
   동의 체크박스 없음: 닉네임 창 버튼 아래 활용 안내 문구만 두고 `meta.notice = "v1"`로 기록. 틀린 링크는 401 → 수집기가 공개 참여로 전환.
 - **점수는 서버가 궤적으로 다시 계산한다** (`scoring.py`, TOL 0.02 = check_demos와 같은 기준). 클라이언트 점수는 무시.
-  score = 100·F1을 소수 첫째 자리까지 **버림**(반올림 안 함, 예: 98.96 → 98.9). 티어 S ≥99.0 / A ≥85 / B ≥70 / C. `is_qualified` = F1 ≥ 0.70 이고 획 수 1~2·부분수+2.
-  S ≥99는 "AI 압도"가 항상 사실이 되도록 AI 기록(98.1)보다 높게 잡은 것. AI 기록이 바뀌면 함께 검토.
+  score = 100·(F1_10px + F1_5px)/2를 소수 첫째 자리까지 **버림**. 티어 S ≥96 / A ≥85 / B ≥70 / C. `score_version = "b-v1"`, 기존 `f1`은 10px 일치도 그대로다. `is_qualified` = F1 ≥ 0.70 이고 획 수 1~2·부분수+2.
+  S ≥96은 운영 DB 실측 닉네임·도안별 최고 기록 26개 중 상위 2개(7.7%)이며 AI B 점수 87.2보다 높다. 추정 기록은 티어 보정 표본에서 제외한다.
 - 남용 방지: IP 해시(솔트 SHA-256, 원본 IP 저장 안 함) 기준 1분 6회·1시간 60회 + 전체 1분 600회(초과 시 503, 개인 링크 제외).
-  닉네임 NFKC 정규화 → 1~20자 한글·영문·숫자, 금칙어(공백·기호 제거 후 비교), 예약어(siat·관리자 등) 거절.
+  닉네임 NFKC 정규화 → 1~13자 한글·영문·숫자, 금칙어(공백·기호 제거 후 비교), 예약어(siat·관리자 등) 거절.
 - **부정행위 방지 (`submission.py`)** — 클라이언트 값은 믿지 않는다:
   · 배포 수집기는 `trajectory`를 보내지 않고, 서버가 `strokes[].points`로 ma3x2 궤적을 직접 만든다(JS와 결과 동일, 테스트로 확인).
   · 허용 필드만 새로 만들어 저장(meta 키 화이트리스트, spec은 서버 값, 숫자 반올림). 점 8000개·획 40개·점 간격 0.25·
@@ -104,7 +114,7 @@ outputs/                # 체크포인트, 캐시, 롤아웃 GIF (재생성 가�
 - Supabase는 서버만 `service_role` 키(`SUPABASE_KEY`)로 접근한다. RLS 켜고 정책 없음 → anon 키로는 아무것도 못 읽음.
 - 리더보드: 도안별 닉네임당 최고 기록. 순위 = 점수 → **평균 오차 `avg_error`**(작을수록 위) → 먼저 달성. 공동 순위 없음.
   `avg_error` = 도안 선 ↔ 그린 선 양방향 평균 거리(0.004 간격 재샘플 선분, TOL에서 자름, 512px 기준 px, 소수 둘째 자리).
-  채점 코드를 바꾸면 `python tools/seed_supabase.py --rescore-errors`로 등록된 기록을 다시 계산한다.
+  채점 코드를 바꾸면 `python tools/rescore_records.py`로 기존 기록 재채점을 미리 보고, `--apply`로 전체 백업 후 반영한다. 원본 없는 기록은 평균 오차 기반 추정임을 표시하고 학습 자격은 보존한다.
   열 추가 전 기록은 `python tools/seed_supabase.py`가 실행될 때 채운다(`missing_avg_error`).
 - 공유: `/s?score=&tier=&template=` 페이지가 OG 태그(이미지 `/api/og`, Pillow 1200×630, 영문 표기)를 주고 `/`로 이동.
   결과 카드(1080², 한글)는 브라우저 캔버스로 만들고 Web Share API로 공유(미지원이면 클립보드).
@@ -115,7 +125,7 @@ outputs/                # 체크포인트, 캐시, 롤아웃 GIF (재생성 가�
   화면 선 = 같은 필터 + 중간점 2차 곡선. 2026-11-07 이전 시연 67개는 스무딩 없이 저장됨(차이는 대부분 1px 미만).
 - `meta.input_type` = 점 개수 기준 주 입력 장치(touch/pen/mouse). DB `input_type` 열, 리더보드·카드에 📱/🖊️/🖱️.
 - "AI vs 나": `AI_DEMOS`(index.html, `// AI_DEMOS_BEGIN … END`)에 롤아웃 궤적과 **같은 채점기로 매긴 점수**를 넣는다.
-  새 모델을 학습하면 `python tools/export_ai_demo.py --rollout … --template …`로 갱신. 지금은 사과만(v4 MLP, 98.1점).
+  새 모델을 학습하면 `python tools/export_ai_demo.py --rollout … --template …`로 갱신. 지금은 사과만(v5b MLP, 앙상블 q4, B 점수 87.2점).
 - 뒤로가기 방어: 그림이 있으면 history 한 칸 흡수(3초 안에 다시 뒤로가면 나감) + 획마다 `vla.draft` 자동 보관·복구.
   OS 가장자리 스와이프 자체는 웹에서 완전히 막을 수 없다.
 - **획 순서 안내 없음 (2026-11-08~)**: 모바일 테스트에서 번호·화살표가 도안을 가리고 혼란을 줘서 제거했다.

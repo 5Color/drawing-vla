@@ -54,7 +54,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
 
-    nick_default = args.nickname[:20]
+    nick_default = args.nickname[:13]
     files = sorted(Path(args.root).glob("demo_*.json"))
     templates = scoring.load_templates()
     rows, skipped, pulled = [], Counter(), 0
@@ -72,7 +72,7 @@ def main() -> int:
         if not sc["qualified"]:
             skipped["채택 기준 미달"] += 1
             continue
-        nick = (meta.get("nickname") or meta.get("contributor") or nick_default)[:20]
+        nick = (meta.get("nickname") or meta.get("contributor") or nick_default)[:13]
         d.pop("action_chunks", None)
         meta.update(target=target, nickname=nick, score=sc, seeded_from=f.name)
         rows.append({

@@ -8,7 +8,7 @@ create extension if not exists pgcrypto;
 
 create table if not exists public.drawing_demos (
   id              uuid primary key default gen_random_uuid(),
-  nickname        text not null check (char_length(nickname) between 1 and 20),
+  nickname        text not null check (char_length(nickname) between 1 and 13),
   contributor     text,                         -- 개인 링크 참여자 이름 (공개 참여자는 null)
   template_name   text not null,
   score           real not null check (score between 0 and 100),

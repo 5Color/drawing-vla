@@ -92,9 +92,9 @@ def link(name: str) -> Message:
 
 @unittest.skipUnless(DEMO_FILES, "data/raw/demo_apple_*.json 필요")
 class TestScoring(unittest.TestCase):
-    def test_real_demos_score_high(self):
+    def test_real_demos_keep_high_loose_agreement_and_qualification(self):
         sc = [scoring.score_trajectory("apple", demo_payload(i)["trajectory"]) for i in range(5)]
-        self.assertTrue(all(s["score"] >= 85 and s["qualified"] for s in sc), sc)
+        self.assertTrue(all(s["f1_10"] >= .85 and s["qualified"] for s in sc), sc)
 
     def test_scribble_and_wrong_template_fail(self):
         random.seed(0)
@@ -104,13 +104,13 @@ class TestScoring(unittest.TestCase):
         self.assertFalse(wrong["qualified"])
 
     def test_tiers(self):
-        self.assertEqual([scoring.tier_for(s)[0] for s in (100, 99, 98.9, 85, 84.9, 70, 69.9, 0)], list("SSAABBCC"))
+        self.assertEqual([scoring.tier_for(s)[0] for s in (100, 96, 95.9, 85, 84.9, 70, 69.9, 0)], list("SSAABBCC"))
 
     def test_score_is_truncated_to_one_decimal(self):
         # 반올림하지 않고 소수 첫째 자리까지 버림 → 실력보다 높게 표시되지 않음
         self.assertEqual([scoring.to_score(f) for f in (0.98962, 0.98999999, 0.99, 1.0, 0.6999)], [98.9, 98.9, 99.0, 100.0, 69.9])
         s = scoring.score_trajectory("apple", demo_payload()["trajectory"])
-        self.assertEqual(s["score"], scoring.to_score(s["f1"]) if s["f1"] == round(s["f1"], 4) else s["score"])
+        self.assertAlmostEqual(s["score"], 50 * (s["f1_10"] + s["f1_5"]), delta=.11)
         self.assertEqual(s["score"], round(s["score"], 1))
 
     def test_avg_error(self):
@@ -213,7 +213,7 @@ class TestApi(unittest.TestCase):
         p = demo_payload()
         p["meta"]["nickname"] = "체크박스없이"                     # 동의 체크 없이 닉네임만으로 통과
         self.assertEqual(self.save(p)[0], 200)
-        for bad in ("", "a" * 21, "<script>", "씨발놈"):
+        for bad in ("", "a" * 14, "<script>", "씨발놈"):
             st, b = self.save(self.public(bad))
             self.assertEqual(st, 400, bad)
 
@@ -525,8 +525,8 @@ class TestApi(unittest.TestCase):
         st, page, _ = self.api.share_page(headers(host="handvsai.vercel.app"),
                                           {"score": ["96"], "tier": ["S"], "template": ["apple"]})
         page = page.decode()
-        # 티어는 주소 값(S)이 아니라 점수로 계산 → 96점은 A
-        self.assertIn('content="https://handvsai.vercel.app/api/og?score=96.0&amp;tier=A&amp;template=apple"', page)
+        # 티어는 점수로 계산. B 채점의 S 기준은 96점.
+        self.assertIn('content="https://handvsai.vercel.app/api/og?score=96.0&amp;tier=S&amp;template=apple"', page)
         st, page2, _ = self.api.share_page(headers(host="x"), {"score": ["98.96"], "tier": ["A"], "template": ["apple"]})
         self.assertIn("98.9점", page2.decode())   # 공유 링크 점수도 버림
         self.assertEqual(self.api.og_image({"score": ["nan"], "tier": ["S"], "template": ["apple"]})[0], 200)
@@ -785,9 +785,10 @@ class TestSupabaseRequests(unittest.TestCase):
             self.db.leaderboard("apple", 5)
             self.db.list_qualified(100, 50)
         lb, lst = self.calls[0][1], self.calls[1][1]
-        self.assertTrue(lb.startswith("https://abc.supabase.co/rest/v1/leaderboard_view?"))
+        self.assertTrue(lb.startswith("https://abc.supabase.co/rest/v1/drawing_demos?"))
         self.assertIn("template_name=eq.apple", lb)
-        self.assertIn("rank=lte.5", lb)
+        self.assertIn("is_qualified=eq.true", lb)
+        self.assertIn("score_meta:trajectory_data->meta->score", urllib.parse.unquote(lb))
         self.assertIn("is_qualified=eq.true", lst)
         self.assertIn("offset=100", lst)
         self.assertIn("limit=50", lst)
@@ -934,10 +935,10 @@ class TestVercelHandlersAndPull(unittest.TestCase):
         self.assertIn("s-maxage", r.headers["Cache-Control"])                             # CDN 캐시
         st, b, _ = self.req("leaderboard", "/api/leaderboard?template=apple")
         self.assertEqual(json.loads(b)["top"][0]["nickname"], "핸들러")
-        st, b, ct = self.req("og", "/api/og?score=97.0&tier=A&template=apple")
+        st, b, ct = self.req("og", "/api/og?score=97.0&tier=S&template=apple")
         self.assertEqual((st, ct), (200, "image/png"))
         # 정규형이 아닌 주소(캐시 우회용 파라미터, 다른 표기, 가짜 티어)는 처리하지 않고 정규 주소로 308
-        for path, loc in [("/api/og?score=97&tier=S&template=apple&x=1", "/api/og?score=97.0&tier=A&template=apple"),
+        for path, loc in [("/api/og?score=97&tier=A&template=apple&x=1", "/api/og?score=97.0&tier=S&template=apple"),
                           ("/api/og?junk=1", "/api/og"),
                           ("/api/leaderboard?template=apple&t=123", "/api/leaderboard?template=apple"),
                           ("/api/stats?me=someone", "/api/stats")]:

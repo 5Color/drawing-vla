@@ -2,12 +2,13 @@
 
   coverage  = 도안 위 샘플점 중, 그린 선(펜 다운 점)과 TOL 이내인 비율   (빠뜨린 부분이 있으면 낮아짐)
   precision = 그린 펜 다운 점 중, 도안과 TOL 이내인 비율                  (도안 밖 낙서가 있으면 낮아짐)
-  F1 → score = 100·F1을 소수 첫째 자리까지 버림 (예: 98.96 → 98.9, 실력보다 높게 표시되지 않게) → 티어 S/A/B/C
+  B score = 100·(F1_10px + F1_5px)/2를 소수 첫째 자리까지 버림 → 티어 S/A/B/C
   avg_error = 도안 선 ↔ 그린 선 평균 거리 (양방향 평균, TOL에서 자름, 512px 캔버스 기준 px, 소수 둘째 자리)
               점수가 같을 때 순위를 가르는 보조 지표 (작을수록 위)
-  학습 데이터 채택(is_qualified) = F1 ≥ 0.70 이고 획 수가 정상 범위(1 ~ 2·부분수+2)
+  학습 데이터 채택(is_qualified) = F1_10px ≥ 0.70 이고 획 수가 정상 범위(1 ~ 2·부분수+2)
 
-기준은 train/check_demos.py와 같다 (TOL = 0.02 = 512px 캔버스에서 약 10px).
+학습 채택 기준은 train/check_demos.py와 같다 (TOL = 0.02 = 512px 캔버스에서 약 10px).
+게임 점수에는 절반 허용오차(NARROW_TOL = 0.01, 약 5px)를 함께 쓴다.
 도안 좌표는 collector/index.html의 TEMPLATES를 그대로 읽는다 (정의는 한 곳에만).
 """
 from __future__ import annotations
@@ -21,12 +22,14 @@ ROOT = Path(__file__).resolve().parent
 INDEX_HTML = ROOT / "collector" / "index.html"
 UNITS = 512.0
 TOL = 0.02
+NARROW_TOL = 0.01
+SCORE_VERSION = "b-v1"
 SAMPLE_STEP = 0.004
 QUALIFY_F1 = 0.70
 DRAW_CELL_CAP = 64      # avg_error 선분 격자 칸당 상한 (사람 최대 44)
 
 TIERS = [  # (최소 점수, 티어, 한국어 라벨, OG 이미지용 영어 라벨)
-    (99, "S", "신의 손 (AI 압도)", "GOD'S HAND"),     # 99점 = F1 ≥ 98.5 → AI 기록(98.1)보다 항상 높음
+    (96, "S", "신의 손 (AI 압도)", "GOD'S HAND"),     # 운영 실측 최고 기록 26개 중 2개(7.7%), 선택 AI 기록 87.2 초과
     (85, "A", "인간 로봇 (정밀 제어)", "HUMAN ROBOT"),
     (70, "B", "자유로운 예술가", "FREE ARTIST"),
     (0, "C", "화백 지망생 (다시 도전!)", "ASPIRING PAINTER"),
@@ -245,12 +248,22 @@ def _resample(line, step: float = SAMPLE_STEP) -> list[tuple[float, float]]:
     return out
 
 
+@lru_cache(maxsize=32)
+def _tpl_seg_grid(parts: tuple, tol: float) -> _SegGrid:
+    return _SegGrid(parts, tol)
+
+
+@lru_cache(maxsize=32)
+def _tpl_grid(tpts: tuple, tol: float) -> _Grid:
+    return _Grid(tpts, tol)
+
+
 def avg_error(parts, runs) -> float:
     """도안 → 그린 선, 그린 선 → 도안 평균 거리의 평균 (512px 기준 px, 소수 둘째 자리)."""
     if not runs:
         return round(TOL * UNITS, 2)
     lines = [_resample(run) for run in runs]   # 입력 기기의 샘플링 속도와 무관하게 0.004 간격 선분
-    g_draw, g_tpl = _SegGrid(lines, TOL, cap=DRAW_CELL_CAP), _SegGrid(parts, TOL)
+    g_draw, g_tpl = _SegGrid(lines, TOL, cap=DRAW_CELL_CAP), _tpl_seg_grid(tuple(tuple(p) for p in parts), TOL)
     tpts = [p for part in parts for p in part]
     dpts = [p for line in lines for p in line]
     e = (sum(map(g_draw.dist, tpts)) / len(tpts) + sum(map(g_tpl.dist, dpts)) / len(dpts)) / 2
@@ -281,27 +294,34 @@ def count_strokes(traj) -> int:
     return n
 
 
+def _agreement(tpts, drawn, tol: float) -> tuple[float, float, float]:
+    if not drawn:
+        return 0.0, 0.0, 0.0
+    g_draw, g_tpl = _Grid(drawn, tol), _tpl_grid(tuple(tpts), tol)
+    cov = sum(g_draw.near(p) for p in tpts) / len(tpts)
+    prec = sum(g_tpl.near(p) for p in drawn) / len(drawn)
+    f1 = 0.0 if cov + prec == 0 else 2 * cov * prec / (cov + prec)
+    return cov, prec, f1
+
+
 def score_trajectory(template: str, traj) -> dict:
     parts = template_parts(template)
     tpts = [p for part in parts for p in part]
     drawn = pen_down_points(traj)
     strokes = count_strokes(traj)
-    if not drawn:
-        cov = prec = f1 = 0.0
-    else:
-        g_draw, g_tpl = _Grid(drawn, TOL), _Grid(tpts, TOL)
-        cov = sum(g_draw.near(p) for p in tpts) / len(tpts)
-        prec = sum(g_tpl.near(p) for p in drawn) / len(drawn)
-        f1 = 0.0 if cov + prec == 0 else 2 * cov * prec / (cov + prec)
-    score = to_score(f1)
+    cov, prec, f1_10 = _agreement(tpts, drawn, TOL)
+    _, _, f1_5 = _agreement(tpts, drawn, NARROW_TOL)
+    score = to_score((f1_10 + f1_5) / 2)
     err = avg_error(parts, pen_down_runs(traj))
     tier, label, label_en = tier_for(score)
     max_strokes = 2 * len(parts) + 2
     reason = None
-    if f1 < QUALIFY_F1:
+    if f1_10 < QUALIFY_F1:
         reason = "F1 70% 미만"
     elif not 1 <= strokes <= max_strokes:
         reason = f"획 수 {strokes}개 (정상 1~{max_strokes}개)"
     return {"score": score, "tier": tier, "tier_label": label, "tier_label_en": label_en,
-            "f1": round(f1, 4), "coverage": round(cov, 4), "precision": round(prec, 4), "avg_error": err,
+            "score_version": SCORE_VERSION,
+            "f1": round(f1_10, 4), "f1_10": round(f1_10, 4), "f1_5": round(f1_5, 4),
+            "coverage": round(cov, 4), "precision": round(prec, 4), "avg_error": err,
             "strokes": strokes, "qualified": reason is None, "reason": reason}

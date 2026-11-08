@@ -277,18 +277,27 @@ class SupabaseDB:
         return res or []
 
     def leaderboard(self, template: str, limit: int = 5) -> list[dict]:
-        res, _ = self._req("GET", "leaderboard_view", {
-            "select": "nickname,score,avg_error,tier,input_type,rank,created_at", "template_name": f"eq.{template}",
-            "rank": f"lte.{limit}", "order": "rank.asc,created_at.asc", "limit": limit})
-        return res or []
+        return self._leaderboard(template, limit)
+
+    def _leaderboard(self, template: str, limit: int, input_type: str | None = None) -> list[dict]:
+        """최고 기록의 추정 여부까지 읽는다. 중복 닉네임이 페이지를 채워도 다음 페이지로 이어 간다."""
+        limit = min(limit, LB_SIZE)
+        rows, offset = [], 0
+        while limit > 0:
+            page, _ = self._req("GET", "drawing_demos", {
+                "select": "nickname,score,avg_error,tier,input_type,created_at,score_meta:trajectory_data->meta->score",
+                "template_name": f"eq.{template}", "is_qualified": "eq.true",
+                **({"input_type": f"eq.{input_type}"} if input_type else {}),
+                "order": "score.desc,avg_error.asc.nullslast,created_at.asc,id.asc", "limit": 100, "offset": offset})
+            rows.extend(page or [])
+            best = _best_per_nickname(rows, limit)
+            if len(best) >= limit or len(page or []) < 100:
+                return best
+            offset += len(page)
+        return []
 
     def leaderboard_by_input(self, template: str, input_type: str, limit: int = 5) -> list[dict]:
-        """입력 장치 하나만의 순위 (닉네임당 최고 기록). 상위 300개 기록에서 닉네임별로 거른다."""
-        res, _ = self._req("GET", "drawing_demos", {
-            "select": "nickname,score,avg_error,tier,input_type,created_at", "template_name": f"eq.{template}",
-            "is_qualified": "eq.true", "input_type": f"eq.{input_type}",
-            "order": "score.desc,avg_error.asc.nullslast,created_at.asc", "limit": 300})
-        return _best_per_nickname(res or [], limit)
+        return self._leaderboard(template, limit, input_type)
 
     def counts(self) -> dict[str, dict]:
         res, _ = self._req("GET", "template_counts", {"select": "template_name,total,qualified"})
@@ -442,17 +451,11 @@ class SqliteDB:
         return rows
 
     def leaderboard(self, template: str, limit: int = 5) -> list[dict]:
-        rows = self._rows("select nickname, score, avg_error, tier, input_type, created_at from drawing_demos "
+        rows = self._rows("select nickname, score, avg_error, tier, input_type, created_at, "
+                          "json_extract(trajectory_data, '$.meta.score') score_meta from drawing_demos "
                           "where template_name=? and is_qualified=1 "
-                          "order by score desc, avg_error is null, avg_error asc, created_at asc", (template,))
-        limit = min(limit, LB_SIZE)
-        best, seen = [], set()
-        for r in rows:  # 닉네임당 최고 기록 1개
-            if r["nickname"].lower() not in seen:
-                seen.add(r["nickname"].lower())
-                best.append(r)
-        # 순위: 점수 → 평균 오차 → 먼저 달성 (공동 순위 없음 → TOP N은 항상 N명 이하)
-        return [{**r, "rank": i} for i, r in enumerate(best[:limit], 1)]
+                          "order by score desc, avg_error is null, avg_error asc, created_at asc, id asc", (template,))
+        return _best_per_nickname(rows, limit)
 
     def review_rows(self, limit: int = 100) -> list[dict]:
         rows = self._rows("select id, nickname, contributor, template_name, score, avg_error, input_type, is_qualified, created_at, json_extract(trajectory_data, '$.meta.checks') checks "
@@ -472,9 +475,10 @@ class SqliteDB:
         return [{**r, "trajectory": json.loads(r["trajectory"]) if r["trajectory"] else None} for r in rows]
 
     def leaderboard_by_input(self, template: str, input_type: str, limit: int = 5) -> list[dict]:
-        rows = self._rows("select nickname, score, avg_error, tier, input_type, created_at from drawing_demos "
+        rows = self._rows("select nickname, score, avg_error, tier, input_type, created_at, "
+                          "json_extract(trajectory_data, '$.meta.score') score_meta from drawing_demos "
                           "where template_name=? and is_qualified=1 and input_type=? "
-                          "order by score desc, avg_error is null, avg_error asc, created_at asc limit 300",
+                          "order by score desc, avg_error is null, avg_error asc, created_at asc, id asc",
                           (template, input_type))
         return _best_per_nickname(rows, limit)
 
@@ -498,7 +502,16 @@ def _best_per_nickname(rows: list[dict], limit: int) -> list[dict]:
         if k not in seen:
             seen.add(k)
             best.append(r)
-    return [{**r, "rank": i} for i, r in enumerate(best[:min(limit, LB_SIZE)], 1)]
+    out = []
+    for i, r in enumerate(best[:min(limit, LB_SIZE)], 1):
+        meta = r.get("score_meta") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except ValueError:
+                meta = {}
+        out.append({**r, "rank": i, "score_estimated": isinstance(meta, dict) and meta.get("estimated") is True})
+    return out
 
 
 def from_env():

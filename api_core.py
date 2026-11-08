@@ -59,7 +59,7 @@ EVENTS = frozenset(("visit", "start", "submit", "result", "retry", "next", "shar
                     "demo_done", "demo_skip", "hint_off"))   # 퍼널 이벤트 (모르는 이름은 무시)
 EVENT_MAX_BYTES = 32
 EVENT_IP_PER_MIN = 300                  # 인스턴스 안 IP당 이벤트 상한 (폭주 시 DB 보호, 넘으면 조용히 무시)
-NICK_RE = re.compile(r"^[0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ _\-.]{1,20}$")
+NICK_RE = re.compile(r"^[0-9A-Za-z가-힣ㄱ-ㅎㅏ-ㅣ _\-.]{1,13}$")
 BANNED = ("시발", "씨발", "씨팔", "ㅅㅂ", "ㅆㅂ", "병신", "ㅂㅅ", "좆", "존나", "지랄", "개새", "새끼", "니미", "느금",
           "엠창", "애미", "애비", "섹스", "보지", "자지", "fuck", "shit", "bitch", "sex", "porn", "nigg")
 RESERVED = ("siat", "admin", "administrator", "관리자", "운영자", "운영진", "system", "root", "official", "ai")
@@ -144,7 +144,7 @@ def clean_nickname(raw) -> tuple[str | None, str | None]:
     """(닉네임, 오류). NFKC 정규화(전각·호환 문자 → 일반 문자) 후 허용 문자만, 욕설·예약어 거절."""
     nick = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", str(raw or ""))).strip()
     if not NICK_RE.match(nick):
-        return None, "닉네임은 1~20자 한글·영문·숫자로 적어 주세요"
+        return None, "닉네임은 1~13자 한글·영문·숫자로 적어 주세요"
     squashed = re.sub(r"[\s_.\-]", "", nick.lower())
     if any(b in squashed for b in BANNED):
         return None, "다른 닉네임을 써 주세요"
@@ -356,6 +356,7 @@ def save(headers, body: bytes, peer: str | None = None) -> Response:
     out["total"] = sum(out["counts"].values())
     if f_mine:
         out["mine"] = f_mine.result()
+    _cache.clear()
     out["top"] = [_lb_row(r) for r in f_top.result()]
     return _json(200, out)
 
@@ -374,7 +375,8 @@ def leaderboard(query: dict) -> Response:
 
 
 def _lb_row(r: dict) -> dict:
-    return {k: r.get(k) for k in ("rank", "nickname", "score", "avg_error", "tier", "input_type")}
+    return {**{k: r.get(k) for k in ("rank", "nickname", "score", "avg_error", "tier", "input_type")},
+            "score_estimated": r.get("score_estimated") is True}
 
 
 # ---------------------------------------------------------------------------
@@ -493,7 +495,7 @@ def share_page(headers, query: dict) -> Response:
         og = f"{site}/api/og?score={p['score_text']}&tier={p['tier']}&template={p['template']}"
     else:
         title = "AI를 이겨라! 내 손 드로잉 정밀도 테스트"
-        desc = "화면을 보고 직접 선을 긋는 시각 제어 AI의 기록은 98.1점! 당신의 손가락은 몇 점인가요?"
+        desc = "화면을 보고 직접 선을 긋는 시각 제어 AI의 기록은 87.2점! 당신의 손가락은 몇 점인가요?"
         og = f"{site}/api/og"
     e = html.escape
     page = f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
@@ -609,6 +611,7 @@ def serve_cron(handler) -> None:
 
 
 def _method_not_allowed(handler) -> None:
+    read_body(handler)   # Windows TCP RST(WinError 10053) 방지: 요청 본문을 비운 뒤 405 응답
     respond(handler, *_json(405, {"ok": False, "error": "지원하지 않는 요청입니다"}))
 
 

@@ -2,7 +2,7 @@
 
 점수는 사람과 똑같이 scoring.py로 다시 매긴다 (공정한 비교).
 
-  python tools/export_ai_demo.py                                        기본: 사과 = outputs/rollout_apple_v4_x12.json
+  python tools/export_ai_demo.py                                        기본: 사과 = outputs/rollout_apple_v5b_matched_te0.01q4.json
   python tools/export_ai_demo.py --rollout outputs/rollout_sprout_v5.json --template sprout --model "v5 MLP"
 """
 from __future__ import annotations
@@ -22,16 +22,18 @@ BEGIN, END = "// AI_DEMOS_BEGIN", "// AI_DEMOS_END"
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rollout", default=str(ROOT / "outputs" / "rollout_apple_v4_x12.json"))
+    ap.add_argument("--rollout", default=str(ROOT / "outputs" / "rollout_apple_v5b_matched_te0.01q4.json"))
     ap.add_argument("--template", default="apple")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--model", default="v4 MLP")
+    ap.add_argument("--model", default="v5b MLP · 앙상블 q4")
     args = ap.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
 
     run = next(r for r in json.loads(open(args.rollout, encoding="utf-8").read())["runs"] if r["seed"] == args.seed)
     traj = [[round(x, 4), round(y, 4), int(p > 0.5)] for x, y, p in run["executed"]]
+    while len(traj) > 1 and traj[-1][2] == 0:   # 끝에 펜을 든 채 맴도는 구간 제거 → 다시 보기 재생이 깔끔하게 끝나도록
+        traj.pop()
     sc = scoring.score_trajectory(args.template, traj)
 
     src = HTML.read_text(encoding="utf-8")
