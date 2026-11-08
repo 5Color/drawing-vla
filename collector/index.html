@@ -189,10 +189,12 @@
   /* ---------- 모달 (닉네임 / 결과) ---------- */
   body.modal-open { overflow: hidden; }
   .modal { position: fixed; inset: 0; z-index: 20; display: none; place-items: center; padding: 16px;
-           background: rgb(5 8 12 / .88); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); touch-action: manipulation; }
+           background: rgb(5 8 12 / .88); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+           touch-action: manipulation; overscroll-behavior: contain; }
   .modal.open { display: grid; }
   .sheet { width: min(100%, 440px); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
-           border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgb(0 0 0 / .6); }
+           border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 60px rgb(0 0 0 / .6);
+           overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .sheet h3 { margin: 0; font-size: 18px; }
   .sheet p { margin: 0; color: var(--muted); font-size: 13px; }
   .sheet input[type="text"] { width: 100%; min-height: 46px; padding: 0 12px; font: inherit; font-size: 16px; color: var(--text);
@@ -209,9 +211,11 @@
   .vs-mid { font: 900 18px/1 system-ui, sans-serif; color: var(--mark); }
   .vs-mid { display: flex; flex-direction: column; align-items: center; gap: 10px; }
   .replay { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); padding: 0;
-            background: var(--raised); color: var(--text); font-size: 13px; cursor: pointer; }
+            background: var(--raised); color: var(--text); font-size: 13px; cursor: pointer;
+            touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .replay:active { background: var(--line); }
-  .speed-btn { padding: 2px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; }
+  .speed-btn { padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer;
+               touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .speed-btn:hover { color: var(--text); border-color: var(--mark); }
   .verdict { text-align: center; font-weight: 700; font-size: 15px; color: var(--text) !important; }
   .card-wrap { text-align: center; }
@@ -1209,9 +1213,11 @@ let tMount = performance.now();
 let firstStrokeDelayMs = null;
 let blurMs = 0, blurStart = null;
 
-function onTabBlur() { if (blurStart === null) blurStart = performance.now(); }
+function onTabBlur() {
+  if (t0 !== null && !saving && !modalOpen() && blurStart === null) blurStart = performance.now();
+}
 function onTabFocus() {
-  if (blurStart !== null) { blurMs += performance.now() - blurStart; blurStart = null; }
+  if (blurStart !== null) { blurMs += Math.max(0, performance.now() - blurStart); blurStart = null; }
 }
 window.addEventListener('blur', onTabBlur);
 window.addEventListener('focus', onTabFocus);
@@ -1343,8 +1349,8 @@ function buildPayload() {
       undo_key_count: undoKeyCount,
       clear_count: clearCount,
       first_stroke_delay_ms: firstStrokeDelayMs !== null ? firstStrokeDelayMs : 0,
-      blur_ms: Math.round(blurMs + (blurStart !== null ? performance.now() - blurStart : 0)),
-      active_duration_ms: Math.max(0, Math.round(last[last.length - 1][2] - (blurMs + (blurStart !== null ? performance.now() - blurStart : 0)))),
+      blur_ms: Math.round(Math.min(last[last.length - 1][2], Math.max(0, blurMs + (blurStart !== null ? performance.now() - blurStart : 0)))),
+      active_duration_ms: Math.max(0, Math.round(last[last.length - 1][2] - Math.min(last[last.length - 1][2], Math.max(0, blurMs + (blurStart !== null ? performance.now() - blurStart : 0))))),
       duration_ms: last[last.length - 1][2],
       guide_opacity: Number(opacity.value),
       guide_order_marks: false,
@@ -1818,12 +1824,21 @@ $('btnShare').addEventListener('click', () => {
     shareLink();
   }
 });
-$('btnNext').addEventListener('click', () => { Sound.tap(); beacon('next'); $('resultModal').classList.remove('open'); syncModalOpen(); finishEpisode(); });
+function closeResultModal() {
+  cancelAnimationFrame(vsAnim);
+  cancelAnimationFrame(countAnim);
+  $('resultModal').classList.remove('open');
+  syncModalOpen();
+}
+$('btnNext').addEventListener('click', () => {
+  Sound.tap(); beacon('next');
+  closeResultModal();
+  finishEpisode();
+});
 // 같은 도안을 바로 다시 (회차는 넘기되 도안은 그대로)
 $('btnRetry').addEventListener('click', () => {
-  Sound.tap();
-  beacon('retry');
-  $('resultModal').classList.remove('open'); syncModalOpen();
+  Sound.tap(); beacon('retry');
+  closeResultModal();
   episode += 1; store.set('episode', episode);
   resetEpisode();
 });
