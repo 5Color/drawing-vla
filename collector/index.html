@@ -1199,6 +1199,8 @@ function undo() {
   redrawInk(); renderObsCanvas(); updateStats(); saveDraft(); updateHint();
 }
 let clearTimer = null;
+let undoButtonCount = 0, undoKeyCount = 0, clearCount = 0;
+function resetCounters() { undoButtonCount = 0; undoKeyCount = 0; clearCount = 0; }
 function disarmClear() {
   clearTimeout(clearTimer); clearTimer = null;
   setLabel(btnClear, 'trash', '모두 지우기'); btnClear.classList.remove('armed');
@@ -1210,9 +1212,12 @@ btnClear.addEventListener('click', () => {
     clearTimer = setTimeout(disarmClear, 1800);
     return;
   }
-  disarmClear(); resetEpisode(); Sound.clear(); showToast('모두 지웠어요');
+  disarmClear(); clearCount++; resetEpisode(); Sound.clear(); showToast('모두 지웠어요');
 });
-btnUndo.addEventListener('click', () => { if (strokes.length && activeId === null) Sound.undo(); undo(); });
+btnUndo.addEventListener('click', () => {
+  if (strokes.length && activeId === null) { undoButtonCount++; Sound.undo(); }
+  undo();
+});
 
 // ===== 도안 선택 / 순환 =====
 function setTarget(key) {
@@ -1220,6 +1225,7 @@ function setTarget(key) {
   if (demoRun) stopDemo(false);   // 시범 중에 도안을 바꾸면 건너뛴 것으로
   targetSel.value = key;
   lastTarget = key;
+  resetCounters();
   resetEpisode(); drawGuide(); renderObsTarget(); renderCounts(); renderTemplateInfo(); renderRecords(); savePrefs();
   loadLeaderboard();
   if (booted) scheduleDemo();
@@ -1311,6 +1317,10 @@ function buildPayload() {
       created_at: new Date().toISOString(),
       num_strokes: strokes.length,
       num_steps: traj.length,
+      undo_count: undoButtonCount + undoKeyCount,
+      undo_button_count: undoButtonCount,
+      undo_key_count: undoKeyCount,
+      clear_count: clearCount,
       duration_ms: last[last.length - 1][2],
       guide_opacity: Number(opacity.value),
       guide_order_marks: false,
@@ -1481,6 +1491,7 @@ async function saveEpisode() {
   showResult(result);
 }
 function finishEpisode() {
+  resetCounters();
   episode += 1; store.set('episode', episode);
   const next = nextTargetAfterSave();
   if (next !== targetSel.value) setTarget(next); else resetEpisode();
@@ -2020,7 +2031,11 @@ window.addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
   if (!(e.ctrlKey || e.metaKey)) return;
   const k = e.key.toLowerCase();
-  if (k === 'z') { e.preventDefault(); undo(); }
+  if (k === 'z') {
+    e.preventDefault();
+    if (strokes.length && activeId === null) { undoKeyCount++; Sound.undo(); }
+    undo();
+  }
   else if (k === 's') { e.preventDefault(); saveEpisode(); }
 });
 window.addEventListener('beforeunload', e => {
