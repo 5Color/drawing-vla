@@ -342,9 +342,11 @@ def save(headers, body: bytes, peer: str | None = None) -> Response:
         return _json(409, {"ok": False, "duplicate": True, "ticket": sub.issue_ticket(_secret()),
                            "error": "이미 저장된 그림이에요. 새로 그려 주세요"})
 
+    draw_sec = (measures.get("draw_ms") or 0) / 1000
+    time_qs = f"&time={draw_sec:.1f}" if draw_sec > 0 else ""
     out = {"ok": True, "hosted": True, "id": row_id, "nickname": nickname, "contributor": who,
            "input_type": input_type, "template": target, **sc, "draw_ms": measures.get("draw_ms", 0), "flags": flags, "review": review, "ticket": sub.issue_ticket(_secret()),
-           "share_url": f"{site_url(headers)}/s?score={sc['score']:.1f}&tier={sc['tier']}&template={target}"}
+           "share_url": f"{site_url(headers)}/s?score={sc['score']:.1f}&tier={sc['tier']}&template={target}{time_qs}"}
     f_rank = _pool.submit(db.rank_of, target, sc["score"], sc["avg_error"]) if sc["qualified"] else None
     f_counts = _pool.submit(db.counts)
     f_mine = _pool.submit(db.contributor_count, who) if who else None
@@ -437,7 +439,7 @@ TIER_COLORS = {"S": (255, 196, 50), "A": (90, 200, 255), "B": (140, 220, 140), "
 
 
 def share_params(query: dict) -> dict | None:
-    """?score=96&tier=S&template=apple 검증. 하나라도 이상하면 None (기본 카드)."""
+    """?score=96&tier=S&template=apple&time=12.4 검증. 하나라도 이상하면 None (기본 카드)."""
     try:
         score = math.floor(float((query.get("score") or [""])[0][:12]) * 10 + 1e-6) / 10   # 소수 첫째 자리까지 (버림)
         target = sanitize_target((query.get("template") or [""])[0])
@@ -445,8 +447,20 @@ def share_params(query: dict) -> dict | None:
         return None
     if not (math.isfinite(score) and 0 <= score <= 100 and target in scoring.load_templates()):
         return None
+
+    time_val = None
+    time_raw = (query.get("time") or [""])[0][:12]
+    if time_raw:
+        try:
+            t = float(time_raw)
+            if math.isfinite(t) and 0.1 <= t <= 600.0:
+                time_val = round(t, 1)
+        except (ValueError, OverflowError):
+            pass
+
     tier = scoring.tier_for(score)[0]   # 주소의 tier 값은 무시하고 점수로 계산
     return {"score": score, "score_text": f"{score:.1f}", "tier": tier, "template": target,
+            "time": time_val, "time_text": f"{time_val:.1f}" if time_val is not None else None,
             "label": scoring.tier_for(score)[1], "label_en": scoring.tier_for(score)[2],
             "template_label": scoring.load_templates()[target]["label"]}
 
@@ -471,8 +485,25 @@ def og_image(query: dict) -> Response:
     d.text((x0, 70), "BEAT THE AI", font=font(44), fill=(230, 237, 243))
     d.text((x0, 124), "Drawing Precision Test", font=font(30), fill=(141, 153, 168))
     if p:
-        d.text((x0, 200), p["score_text"], font=font(160), fill=color)
-        d.text((x0 + 12 + d.textlength(p["score_text"], font=font(160)), 318), "/100", font=font(44), fill=(141, 153, 168))
+        d.text((x0, 185), p["score_text"], font=font(150), fill=color)
+        d.text((x0 + 12 + d.textlength(p["score_text"], font=font(150)), 295), "/100", font=font(40), fill=(141, 153, 168))
+
+        # 소요 시간 & AI 비교 배지
+        sub_y = 350
+        tx = x0
+        if p.get("time_text"):
+            d.text((tx, sub_y), f"TIME {p['time_text']}s", font=font(28), fill=(200, 210, 220))
+            tx += int(d.textlength(f"TIME {p['time_text']}s", font=font(28))) + 28
+
+        diff = p["score"] - 87.2
+        if diff >= 0:
+            ai_badge = f"BEAT AI (+{diff:.1f}pts)"
+            badge_color = (52, 211, 153)
+        else:
+            ai_badge = f"VS AI ({diff:.1f}pts)"
+            badge_color = (248, 113, 113)
+        d.text((tx, sub_y), ai_badge, font=font(28), fill=badge_color)
+
         d.rounded_rectangle((x0, 420, x0 + 90, 510), 18, fill=color)
         d.text((x0 + 45, 466), p["tier"], font=font(64), fill=(13, 17, 23), anchor="mm")
         d.text((x0 + 110, 440), f"{p['tier']}-TIER", font=font(34), fill=(230, 237, 243))
@@ -490,9 +521,14 @@ def og_image(query: dict) -> Response:
 def share_page(headers, query: dict) -> Response:
     site, p = site_url(headers), share_params(query)
     if p:
-        title = f"{p['score_text']}점 · {p['tier']}급 {p['label']} | AI를 이겨라! 내 손 드로잉 정밀도 테스트"
-        desc = f"{p['template_label']} 도안 정밀도 {p['score_text']}점. 내 손은 상위 몇 %일까? 지금 도전해 보세요."
-        og = f"{site}/api/og?score={p['score_text']}&tier={p['tier']}&template={p['template']}"
+        diff = p["score"] - 87.2
+        ai_status = f"AI 격파 (+{diff:.1f}점)!" if diff >= 0 else f"AI 기록(87.2점)까지 단 {abs(diff):.1f}점!"
+        time_info = f" ({p['time_text']}초)" if p.get("time_text") else ""
+        time_qs = f"&time={p['time_text']}" if p.get("time_text") else ""
+
+        title = f"{p['score_text']}점{time_info} · {p['tier']}급 {p['label']} | AI를 이겨라! 내 손 드로잉 정밀도 테스트"
+        desc = f"{ai_status} {p['template_label']} 도안 정밀도 {p['score_text']}점{time_info}. 내 손은 상위 몇 %일까? 지금 도전해 보세요."
+        og = f"{site}/api/og?score={p['score_text']}&tier={p['tier']}&template={p['template']}{time_qs}"
     else:
         title = "AI를 이겨라! 내 손 드로잉 정밀도 테스트"
         desc = "화면을 보고 직접 선을 긋는 시각 제어 AI의 기록은 87.2점! 당신의 손가락은 몇 점인가요?"
@@ -556,7 +592,10 @@ def canonical_query(name: str, headers, q: dict) -> str | None:
         return f"template={t}" + (f"&input={inp}" if inp in INPUTS else "")
     if name == "og":   # 공유 페이지(/s)는 Vercel 경로 재작성을 거치고 생성 비용도 작아 정규화하지 않음
         p = share_params(q)
-        return f"score={p['score_text']}&tier={p['tier']}&template={p['template']}" if p else ""
+        if not p:
+            return ""
+        time_qs = f"&time={p['time_text']}" if p.get("time_text") else ""
+        return f"score={p['score_text']}&tier={p['tier']}&template={p['template']}{time_qs}"
     if name == "ticket":
         return ""
     return None

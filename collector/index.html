@@ -1809,10 +1809,16 @@ async function shareByCopy(full) {   // 공유 창을 못 쓰는 브라우저(�
 }
 $('btnShare').addEventListener('click', () => {
   beacon('share');
-  const r = lastResult, url = r.share_url || `${location.origin}/`;
+  const r = lastResult;
+  let url = r.share_url || `${location.origin}/`;
+  const sec = r.draw_ms ? (r.draw_ms / 1000).toFixed(1) : (r.duration_ms ? (r.duration_ms / 1000).toFixed(1) : '');
+  if (sec && !url.includes('time=')) {
+    url += (url.includes('?') ? '&' : '?') + `time=${sec}`;
+  }
+  const timeText = sec ? ` · ⏱ ${sec}초` : '';
   const title = 'AI를 이겨라! 드로잉 벤치마크';
   const text = `AI를 이겨라! ${TEMPLATES[r.template].label} 드로잉 ${fmt(r.score)}점 (${r.tier}급 ${r.tier_label})`
-    + `${r.rank ? ` · ${rankText(r)}` : ''}. 너도 해 봐!`;
+    + `${r.rank ? ` · ${rankText(r)}` : ''}${timeText}. 너도 해 봐!`;
   const full = `${text} ${url}`;
   const shareLink = () => (navigator.share ? navigator.share({ title, text, url }) : Promise.reject(new Error('no-share')))
     .catch(e => { if (e.name !== 'AbortError') return shareByCopy(full); });

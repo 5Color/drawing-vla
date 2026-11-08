@@ -532,6 +532,12 @@ class TestApi(unittest.TestCase):
         self.assertEqual(self.api.og_image({"score": ["nan"], "tier": ["S"], "template": ["apple"]})[0], 200)
         self.assertIn("summary_large_image", page)
         st, page, _ = self.api.share_page(headers(host="x"), {"score": ["96"], "tier": ["S"], "template": ['"><script>']})
+        st, page3, _ = self.api.share_page(headers(host="handvsai.vercel.app"),
+                                           {"score": ["96"], "tier": ["S"], "template": ["apple"], "time": ["12.4"]})
+        self.assertIn("&amp;time=12.4", page3.decode())
+        self.assertIn("12.4초", page3.decode())
+        st, png_time, _ = self.api.og_image({"score": ["96"], "tier": ["S"], "template": ["apple"], "time": ["12.4"]})
+        self.assertEqual(st, 200)
         self.assertNotIn("<script>", page.decode())
 
     # --- 기기 비밀값(X-Owner) · 닉네임 주인 ---------------------------------------
