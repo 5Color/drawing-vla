@@ -368,10 +368,13 @@ def main() -> int:
             for j in range(1, sub + 1):
                 k = start + max(1, round((end - start) * j / sub))
                 frames_b.append(brush_render(runs_from_traj(executed[:k]), 256))
-        frames_b += [frames_b[-1]] * args.brush_fps
+        if len(frames_b) > 360:
+            idx = np.unique(np.rint(np.linspace(0, len(frames_b) - 1, 360)).astype(int))
+            frames_b = [frames_b[i] for i in idx]
+        frames_b += [frames_b[-1]] * min(args.brush_fps, 15)
         bgif = OUT_DIR / f"rollout_{name}_brush.gif"
         frames_b[0].save(bgif, save_all=True, append_images=frames_b[1:], duration=round(1000 / args.brush_fps),
-                         loop=0, optimize=True)
+                         loop=0, optimize=False)
         outs += [bpng, bgif]
 
     if n_seeds > 1:  # 시드별 최종 그림: 디퓨전이 매번 어떤 스타일을 고르는지
