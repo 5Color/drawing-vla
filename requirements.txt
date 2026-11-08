@@ -1,0 +1,3 @@
+# Vercel 함수(api/*.py) 전용 의존성. Supabase는 표준 라이브러리(urllib)로 호출하므로 SDK 불필요.
+# Pillow: /api/og 공유 썸네일 생성. 학습 코드(train/) 의존성(torch 등)은 여기 넣지 말 것.
+pillow>=11

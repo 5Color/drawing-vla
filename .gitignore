@@ -1,0 +1,28 @@
+# Secrets and local service / agent settings
+.env*
+.collect-secrets*.json
+.vercel/
+.claude/
+.codex/
+.agents/
+
+# Original player data, checkpoints, caches and generated artifacts
+/data/
+/outputs/
+/backups/
+*.pth
+*.pt
+*.npz
+*.log
+*.sqlite*
+
+# Python environments and temporary files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+Thumbs.db

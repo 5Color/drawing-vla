@@ -1,0 +1,52 @@
+"""AI(학습된 정책)의 폐루프 롤아웃 궤적을 collector/index.html의 AI_DEMOS에 넣는다 — 결과 창의 "AI vs 나" 비교용.
+
+점수는 사람과 똑같이 scoring.py로 다시 매긴다 (공정한 비교).
+
+  python tools/export_ai_demo.py                                        기본: 사과 = outputs/rollout_apple_v4_x12.json
+  python tools/export_ai_demo.py --rollout outputs/rollout_sprout_v5.json --template sprout --model "v5 MLP"
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+
+import collect_secrets  # noqa: F401  (루트 경로를 sys.path에 추가)
+import scoring
+
+ROOT = collect_secrets.ROOT
+HTML = ROOT / "collector" / "index.html"
+BEGIN, END = "// AI_DEMOS_BEGIN", "// AI_DEMOS_END"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rollout", default=str(ROOT / "outputs" / "rollout_apple_v4_x12.json"))
+    ap.add_argument("--template", default="apple")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--model", default="v4 MLP")
+    args = ap.parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+
+    run = next(r for r in json.loads(open(args.rollout, encoding="utf-8").read())["runs"] if r["seed"] == args.seed)
+    traj = [[round(x, 4), round(y, 4), int(p > 0.5)] for x, y, p in run["executed"]]
+    sc = scoring.score_trajectory(args.template, traj)
+
+    src = HTML.read_text(encoding="utf-8")
+    m = re.search(re.escape(BEGIN) + r"\n(.*?)\n\s*" + re.escape(END), src, re.S)
+    demos = json.loads(m.group(1).split("=", 1)[1].strip().rstrip(";")) if m else {}
+    demos[args.template] = {"score": sc["score"], "model": args.model, "traj": traj}   # 사람과 같은 버림 규칙
+    block = f"{BEGIN}\nconst AI_DEMOS = {json.dumps(demos, separators=(',', ':'))};\n{END}"
+    if m:
+        src = src[:m.start()] + block + src[m.end():]
+    else:
+        raise SystemExit(f"{HTML.name}에 {BEGIN} … {END} 표식이 없습니다")
+    HTML.write_text(src, encoding="utf-8")
+    print(f"[ai-demo] {args.template}: {args.model} {sc['score']:.1f}점 ({len(traj)}스텝) → {HTML.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

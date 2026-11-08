@@ -1,0 +1,14 @@
+# 배포에는 수집기 페이지와 API에 필요한 파일만 올린다 (화이트리스트).
+# 데이터(data/), 학습 코드(train/), 출력(outputs/), 로컬 서버(server.py), 비밀값 파일은 절대 올라가지 않는다.
+# 루트 .py는 함수 번들(import)용이며, vercel.json의 outputDirectory=collector 때문에 웹으로는 제공되지 않는다.
+/*
+!/collector
+!/api
+!/api_core.py
+!/db.py
+!/scoring.py
+!/submission.py
+!/targets_128.json
+!/collect_common.py
+!/requirements.txt
+!/vercel.json
