@@ -2164,10 +2164,18 @@ function renderCounts(counts = lastCounts, total = lastTotal) {
     const li = document.createElement('li');
     li.textContent = t.label;
     const b = document.createElement('b');
-    b.textContent = lastCounts[k] || 0;
+    const cnt = lastCounts[k] || 0;
+    b.textContent = cnt;
     li.append(b);
     if (k === targetSel.value) li.className = 'current';
     ul.append(li);
+
+    // 드롭다운 옵션에 부족 상태(⚡ 13/30) 실시간 표시
+    for (const opt of targetSel.options) {
+      if (opt.value === k) {
+        opt.textContent = cnt < 30 ? `⚡ ${t.label} (${cnt}/30 부족)` : `✓ ${t.label} (${cnt})`;
+      }
+    }
   }
   $('countTotal').textContent = `· 총 ${lastTotal}`;
 }
@@ -2193,18 +2201,11 @@ async function refreshServer() {
   }
   const pf = store.get('prefs', {});
   if (hosted && !pf.cycleChosen) cycleSel.value = 'fewest';   // 배포 모드 기본: 적게 모인 도안부터
-  // 첫 화면 도안 (그리던 그림을 복구했으면 그대로):
-  //  처음 온 사람은 사과부터 — 'AI vs 나' 대결(AI_DEMOS)이 지금 사과만 있어서. 첫 결과를 본 뒤(vla.firstDone)부터는
-  //  적게 모인 도안으로 ('같은 도안 반복'을 직접 고른 경우는 그대로)
+  // 첫 화면 도안: 사과는 이미 120개 이상 모였으므로 시연이 가장 부족한 도안부터 우선 추천
   if (hosted && !steered && !restored && !strokes.length && activeId === null && !saving && !modalOpen()) {
-    if (!flag('firstDone')) {
-      steered = true;
-      if (targetSel.value !== 'apple' && 'apple' in TEMPLATES) setTarget('apple');
-    } else if (cycleSel.value === 'fewest') {
-      steered = true;
-      const k = pickFewest();
-      if (k !== targetSel.value) setTarget(k);
-    }
+    steered = true;
+    const k = pickFewest();
+    if (k && k !== targetSel.value) setTarget(k);
   }
   if (hosted) loadLeaderboard();
   afterBoot();
