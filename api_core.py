@@ -377,8 +377,52 @@ def leaderboard(query: dict) -> Response:
 
 
 def _lb_row(r: dict) -> dict:
-    return {**{k: r.get(k) for k in ("rank", "nickname", "score", "avg_error", "tier", "input_type")},
+    return {**{k: r.get(k) for k in ("id", "rank", "nickname", "score", "avg_error", "tier", "input_type")},
             "score_estimated": r.get("score_estimated") is True}
+
+
+@_guard
+def trajectory(query: dict) -> Response:
+    raw_id = (query.get("id") or [""])[0].strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", raw_id):
+        return _json(400, {"ok": False, "error": "올바른 id가 아닙니다"})
+
+    db = get_db()
+    if isinstance(db, dbmod.SupabaseDB):
+        res, _ = db._req("GET", "drawing_demos", {
+            "select": "id,nickname,template_name,score,avg_error,input_type,trajectory_data",
+            "id": f"eq.{raw_id}",
+            "limit": 1
+        })
+        row = res[0] if (res and isinstance(res, list)) else None
+    else:
+        rows = db._rows(
+            "select id, nickname, template_name, score, avg_error, input_type, trajectory_data from drawing_demos where id=?",
+            (raw_id,)
+        )
+        row = rows[0] if rows else None
+
+    if not row:
+        return _json(404, {"ok": False, "error": "기록을 찾을 수 없습니다"})
+
+    traj = row.get("trajectory_data") or {}
+    if isinstance(traj, str):
+        try:
+            traj = json.loads(traj)
+        except Exception:
+            traj = {}
+
+    strokes = traj.get("strokes") or []
+    return _json(200, {
+        "ok": True,
+        "id": row.get("id"),
+        "nickname": row.get("nickname"),
+        "template": row.get("template_name"),
+        "score": row.get("score"),
+        "avg_error": row.get("avg_error"),
+        "input_type": row.get("input_type"),
+        "strokes": strokes,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -576,7 +620,7 @@ def respond_empty(handler, status: int = 204) -> None:
 #   GET은 정규 주소(허용한 파라미터만, 정해진 형식)로만 실제 처리한다. 다른 모양이면 정규 주소로 308.
 #   → 쿼리를 바꿔 CDN 캐시를 우회하며 DB 조회·이미지 생성을 반복시키는 공격 방지. 정상 사용자 주소는 이미 정규형.
 # ---------------------------------------------------------------------------
-GET_PATHS = {"stats": "/api/stats", "leaderboard": "/api/leaderboard", "og": "/api/og", "share": "/s", "ticket": "/api/ticket"}
+GET_PATHS = {"stats": "/api/stats", "leaderboard": "/api/leaderboard", "og": "/api/og", "share": "/s", "ticket": "/api/ticket", "trajectory": "/api/trajectory"}
 
 
 def canonical_query(name: str, headers, q: dict) -> str | None:
@@ -590,6 +634,9 @@ def canonical_query(name: str, headers, q: dict) -> str | None:
         if t not in scoring.load_templates():
             return None
         return f"template={t}" + (f"&input={inp}" if inp in INPUTS else "")
+    if name == "trajectory":
+        raw_id = (q.get("id") or [""])[0].strip().lower()
+        return f"id={raw_id}" if re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", raw_id) else None
     if name == "og":   # 공유 페이지(/s)는 Vercel 경로 재작성을 거치고 생성 비용도 작아 정규화하지 않음
         p = share_params(q)
         if not p:
@@ -603,7 +650,7 @@ def canonical_query(name: str, headers, q: dict) -> str | None:
 
 def _cache_for(name: str, headers) -> str:
     return {"stats": stats_cache(headers), "leaderboard": CACHE_PUBLIC, "og": CACHE_LONG,
-            "share": CACHE_LONG}.get(name, "no-store")
+            "share": CACHE_LONG, "trajectory": CACHE_LONG}.get(name, "no-store")
 
 
 def serve_get(handler, name: str) -> None:
@@ -623,7 +670,8 @@ def serve_get(handler, name: str) -> None:
         return
     resp = {"stats": lambda: stats(handler.headers), "leaderboard": lambda: leaderboard(q),
             "og": lambda: og_image(q), "share": lambda: share_page(handler.headers, q),
-            "ticket": lambda: ticket(handler.headers)}[name]()
+            "ticket": lambda: ticket(handler.headers),
+            "trajectory": lambda: trajectory(q)}[name]()
     respond(handler, *resp, cache=_cache_for(name, handler.headers))
 
 
@@ -656,7 +704,7 @@ def _method_not_allowed(handler) -> None:
 
 POST_ROUTES = {"save": serve_save, "event": serve_event, "delete": serve_delete}
 GET_ROUTES = {"cron": serve_cron}   # 나머지 GET은 serve_get (정규 주소 308·캐시)
-HANDLER_NAMES = ("save", "stats", "leaderboard", "og", "share", "ticket", "event", "delete", "cron")
+HANDLER_NAMES = ("save", "stats", "leaderboard", "og", "share", "ticket", "event", "delete", "cron", "trajectory")
 
 
 def make_handler(name: str):

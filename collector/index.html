@@ -236,7 +236,7 @@
 
   /* ---------- 리더보드 ---------- */
   .lb ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  .lb li { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto auto auto; gap: 6px; align-items: center; padding: 6px 8px;
+  .lb li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto auto auto; gap: 6px; align-items: center; padding: 6px 8px;
            border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font-size: 13px; }
   .lb li .r { color: var(--muted); font-weight: 700; text-align: center; }
   .lb li .n { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
@@ -245,9 +245,51 @@
   .lb li .s { font-weight: 700; font-variant-numeric: tabular-nums; }
   .lb li .e { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .lb li.me { border-color: var(--accent); }
+  .btn-ghost-play {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 6px; border: 1px solid rgba(245, 158, 11, 0.4);
+    background: rgba(245, 158, 11, 0.12); color: #fbbf24; cursor: pointer; padding: 0;
+    transition: transform .12s, background-color .12s, border-color .12s;
+  }
+  .btn-ghost-play:hover {
+    background: #f59e0b; color: #000; border-color: #f59e0b;
+    transform: scale(1.1);
+  }
+  .btn-ghost-play .px { width: 10px; height: 10px; }
   .lb .empty { color: var(--muted); font-size: 12px; }
   .lb li.empty { display: block; text-align: center; }   /* 순위 칸 격자를 쓰지 않음 (글자가 세로로 깨지지 않게) */
   .no-lb .lb { display: none; }
+
+  /* ---------- 장인 고스트 뷰어 HUD ---------- */
+  .ghost-bar {
+    position: absolute; top: 10px; left: 10px; right: 10px; z-index: 8;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 7px 12px; border-radius: 9px;
+    background: rgba(20, 24, 33, 0.9); backdrop-filter: blur(8px);
+    border: 1px solid rgba(245, 158, 11, 0.55);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    font-size: 13px; animation: ghostFadeIn .2s ease-out;
+  }
+  @keyframes ghostFadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  .ghost-info { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .ghost-icon { font-size: 14px; }
+  .ghost-text { display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; }
+  .ghost-text b { color: #fbbf24; font-weight: 700; text-overflow: ellipsis; overflow: hidden; max-width: 110px; }
+  .ghost-text span { color: var(--muted); font-size: 12px; }
+  .ghost-ctrls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .ghost-btn {
+    min-height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.15);
+    background: var(--raised); color: var(--text); font: inherit; font-size: 12px; font-weight: 600;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all .12s;
+  }
+  .ghost-btn:hover { background: #2a3442; }
+  .ghost-btn.pin.active {
+    background: rgba(245, 158, 11, 0.25); color: #fbbf24; border-color: rgba(245, 158, 11, 0.6);
+  }
+  .ghost-btn.close {
+    padding: 0 8px; color: var(--muted);
+  }
+  .ghost-btn.close:hover { color: #fff; background: rgba(239, 68, 68, 0.3); border-color: rgba(239, 68, 68, 0.5); }
 
   /* ---------- 버튼 ---------- */
   .btn {
@@ -386,9 +428,23 @@
       <canvas id="guide"></canvas>
       <canvas id="hint"></canvas>
       <canvas id="demo" hidden></canvas>
+      <canvas id="ghost" hidden></canvas>
       <canvas id="ink"></canvas>
       <div class="tinfo" id="tInfo" aria-live="polite"></div>
       <div class="demo-chip" id="demoChip" aria-live="polite"></div>
+      <div class="ghost-bar" id="ghostBar" hidden>
+        <div class="ghost-info">
+          <span class="ghost-icon">👑</span>
+          <div class="ghost-text">
+            <b id="ghostNick">장인</b>
+            <span id="ghostScore">100.0점</span>
+          </div>
+        </div>
+        <div class="ghost-ctrls">
+          <button class="ghost-btn pin" id="btnGhostPin" type="button" title="가이드선으로 남겨두고 내가 따라 그리기">가이드 고정</button>
+          <button class="ghost-btn close" id="btnGhostClose" type="button" aria-label="닫기">✕</button>
+        </div>
+      </div>
     </div>
     <div id="toast" role="status" aria-live="polite"></div>
   </section>
@@ -599,7 +655,7 @@ const AI_DEMOS = {"apple":{"score":87.2,"model":"v5b MLP \u00b7 \uc559\uc0c1\ube
 // ===== DOM =====
 const $ = id => document.getElementById(id);
 const stage = $('stage'), board = $('board');
-const guideCv = $('guide'), hintCv = $('hint'), demoCv = $('demo'), inkCv = $('ink');
+const guideCv = $('guide'), hintCv = $('hint'), demoCv = $('demo'), ghostCv = $('ghost'), inkCv = $('ink');
 const obsCanvasCv = $('obsCanvas'), obsTargetCv = $('obsTarget');
 const targetSel = $('targetSel'), cycleSel = $('cycleSel'), opacity = $('opacity'), opacityOut = $('opacityOut');
 const btnClear = $('btnClear'), btnUndo = $('btnUndo'), btnSave = $('btnSave');
@@ -1061,6 +1117,7 @@ function layout() {
   board.style.width = board.style.height = size + 'px';
   for (const cv of [guideCv, hintCv, inkCv]) cv.width = cv.height = px;
   if (!demoCv.hidden) demoCv.width = demoCv.height = px;   // 시범 중이면 다음 프레임부터 새 크기로
+  if (!ghostCv.hidden) { ghostCv.width = ghostCv.height = px; if (ghostPinned && currentGhostStrokes) renderPinnedGhost(); }
   if (activeId !== null) rect = inkCv.getBoundingClientRect();
   drawGuide();
   drawHint();
@@ -1250,6 +1307,7 @@ btnUndo.addEventListener('click', () => {
 function setTarget(key) {
   if (saving) return;
   if (demoRun) stopDemo(false);   // 시범 중에 도안을 바꾸면 건너뛴 것으로
+  closeGhost();
   targetSel.value = key;
   lastTarget = key;
   resetCounters();
@@ -1930,10 +1988,149 @@ function renderLeaderboard(el, top) {
         } else { s.textContent = txt; }
         li.append(s);
       }
+      if (r.id) {
+        const pb = document.createElement('button');
+        pb.type = 'button'; pb.className = 'btn-ghost-play';
+        pb.title = `${r.nickname}님의 궤적 보기`;
+        pb.setAttribute('aria-label', `${r.nickname}님의 궤적 보기`);
+        pb.innerHTML = pxSvg('play');
+        pb.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          const targetKey = (el === $('lbListModal') && lastResult) ? lastResult.template : targetSel.value;
+          loadAndPlayGhost(r.id, r.nickname, r.score, targetKey);
+        });
+        li.append(pb);
+      }
       if (myName() && r.nickname.toLowerCase() === myName().toLowerCase()) li.classList.add('me');
       return li;
     }));
 }
+
+// ===== 1위 장인 고스트 리플레이 (Champion Ghost Viewer) =====
+let ghostAnim = 0;
+let ghostPinned = false;
+let currentGhostStrokes = null;
+let ghostTemplate = '';
+
+async function loadAndPlayGhost(id, nickname, score, templateKey) {
+  Sound.tap();
+  if (modalOpen()) {
+    $('resultModal').classList.remove('open');
+    syncModalOpen();
+  }
+  if (matchMedia('(orientation: portrait)').matches && moreEl.open) {
+    moreEl.open = false;
+  }
+  if (targetSel.value !== templateKey) {
+    targetSel.value = templateKey;
+    setTarget(templateKey);
+  }
+
+  showToast(`${nickname}님의 궤적 불러오는 중…`, 'ok', 1200);
+
+  try {
+    const res = await fetchJSON(`/api/trajectory?id=${encodeURIComponent(id)}`, {}, 6000);
+    if (!res || !res.ok || !res.strokes || !res.strokes.length) {
+      showToast('궤적 데이터를 불러오지 못했어요.', 'warn');
+      return;
+    }
+    playGhostTrajectory(res.strokes, nickname, score, templateKey);
+  } catch {
+    showToast('궤적을 불러오는 중 오류가 났어요.', 'warn');
+  }
+}
+
+function playGhostTrajectory(rawStrokes, nickname, score, templateKey) {
+  cancelAnimationFrame(ghostAnim);
+  ghostPinned = false;
+  ghostTemplate = templateKey;
+
+  const normStrokes = rawStrokes.map(s => Array.isArray(s) ? s : (s.points || [])).filter(s => s && s.length);
+  if (!normStrokes.length) {
+    showToast('재생할 획이 없어요.', 'warn');
+    return;
+  }
+  currentGhostStrokes = normStrokes;
+
+  $('ghostNick').textContent = nickname;
+  $('ghostScore').textContent = `${fmt(score)}점`;
+  $('ghostBar').hidden = false;
+  $('btnGhostPin').textContent = '가이드 고정';
+  $('btnGhostPin').classList.remove('active');
+
+  ghostCv.width = ghostCv.height = px;
+  ghostCv.hidden = false;
+  const ctx = ghostCv.getContext('2d');
+
+  const t0 = normStrokes[0][0][2] || 0;
+  const tEnd = Math.max(...normStrokes.map(s => s[s.length - 1][2] || 0)) - t0;
+  const duration = Math.max(1200, Math.min(4500, (tEnd || 2500) / 2));
+  const startTime = performance.now();
+
+  const step = (now) => {
+    if (ghostPinned) return;
+    const elapsed = now - startTime;
+    const progress = Math.min(1, elapsed / duration);
+    const curTime = t0 + (tEnd || 2500) * progress;
+
+    const partial = normStrokes.map(s => s.filter(p => (p[2] || 0) <= curTime)).filter(s => s.length);
+
+    ctx.clearRect(0, 0, px, px);
+    if (partial.length) {
+      drawDrawing(ctx, 0, 0, px, templateKey, partial, '#fbbf24', Math.max(3, px * 0.012));
+    }
+
+    if (progress < 1) {
+      ghostAnim = requestAnimationFrame(step);
+    } else {
+      drawDrawing(ctx, 0, 0, px, templateKey, normStrokes, '#fbbf24', Math.max(3, px * 0.012));
+    }
+  };
+
+  step(startTime);
+}
+
+function renderPinnedGhost() {
+  if (!currentGhostStrokes) return;
+  ghostCv.width = ghostCv.height = px;
+  ghostCv.hidden = false;
+  const ctx = ghostCv.getContext('2d');
+  ctx.clearRect(0, 0, px, px);
+  ctx.save();
+  ctx.globalAlpha = 0.42;
+  drawDrawing(ctx, 0, 0, px, ghostTemplate || targetSel.value, currentGhostStrokes, '#f59e0b', Math.max(2.5, px * 0.01));
+  ctx.restore();
+}
+
+function closeGhost() {
+  cancelAnimationFrame(ghostAnim);
+  $('ghostBar').hidden = true;
+  ghostCv.hidden = true;
+  ghostCv.width = ghostCv.height = 0;
+  currentGhostStrokes = null;
+  ghostPinned = false;
+}
+
+function toggleGhostPin() {
+  if (!currentGhostStrokes) return;
+  ghostPinned = !ghostPinned;
+  const pinBtn = $('btnGhostPin');
+  if (ghostPinned) {
+    cancelAnimationFrame(ghostAnim);
+    pinBtn.textContent = '고정 해제';
+    pinBtn.classList.add('active');
+    renderPinnedGhost();
+    showToast('장인의 궤적이 가이드로 고정되었어요! 따라 그려보세요.', 'ok', 2500);
+  } else {
+    pinBtn.textContent = '가이드 고정';
+    pinBtn.classList.remove('active');
+    closeGhost();
+  }
+}
+
+$('btnGhostPin').addEventListener('click', toggleGhostPin);
+$('btnGhostClose').addEventListener('click', closeGhost);
+
 setInterval(() => { if (hosted && !document.hidden && moreEl.open) loadLeaderboard(); }, 30000);
 renderTabs($('lbTabs'), 'lbList', () => loadLeaderboard());
 

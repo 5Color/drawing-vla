@@ -285,7 +285,7 @@ class SupabaseDB:
         rows, offset = [], 0
         while limit > 0:
             page, _ = self._req("GET", "drawing_demos", {
-                "select": "nickname,score,avg_error,tier,input_type,created_at,score_meta:trajectory_data->meta->score",
+                "select": "id,nickname,score,avg_error,tier,input_type,created_at,score_meta:trajectory_data->meta->score",
                 "template_name": f"eq.{template}", "is_qualified": "eq.true",
                 **({"input_type": f"eq.{input_type}"} if input_type else {}),
                 "order": "score.desc,avg_error.asc.nullslast,created_at.asc,id.asc", "limit": 100, "offset": offset})
@@ -451,7 +451,7 @@ class SqliteDB:
         return rows
 
     def leaderboard(self, template: str, limit: int = 5) -> list[dict]:
-        rows = self._rows("select nickname, score, avg_error, tier, input_type, created_at, "
+        rows = self._rows("select id, nickname, score, avg_error, tier, input_type, created_at, "
                           "json_extract(trajectory_data, '$.meta.score') score_meta from drawing_demos "
                           "where template_name=? and is_qualified=1 "
                           "order by score desc, avg_error is null, avg_error asc, created_at asc, id asc", (template,))
@@ -475,7 +475,7 @@ class SqliteDB:
         return [{**r, "trajectory": json.loads(r["trajectory"]) if r["trajectory"] else None} for r in rows]
 
     def leaderboard_by_input(self, template: str, input_type: str, limit: int = 5) -> list[dict]:
-        rows = self._rows("select nickname, score, avg_error, tier, input_type, created_at, "
+        rows = self._rows("select id, nickname, score, avg_error, tier, input_type, created_at, "
                           "json_extract(trajectory_data, '$.meta.score') score_meta from drawing_demos "
                           "where template_name=? and is_qualified=1 and input_type=? "
                           "order by score desc, avg_error is null, avg_error asc, created_at asc, id asc",

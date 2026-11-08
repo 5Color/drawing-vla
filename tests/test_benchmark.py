@@ -292,6 +292,24 @@ class TestApi(unittest.TestCase):
         self.assertEqual([r["score"] for r in top], sorted([r["score"] for r in top], reverse=True))
         self.assertEqual(self.api.leaderboard({"template": ["nope"]})[0], 400)
 
+    def test_trajectory_endpoint(self):
+        p = self.public("장인")
+        st, b = self.save(p)
+        self.assertEqual(st, 200)
+        top = json.loads(self.api.leaderboard({"template": ["apple"]})[1])["top"]
+        demo_id = top[0]["id"]
+        self.assertTrue(demo_id)
+
+        st, body, _ = self.api.trajectory({"id": [demo_id]})
+        self.assertEqual(st, 200)
+        data = json.loads(body)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["nickname"], "장인")
+        self.assertEqual(len(data["strokes"]), len(p["strokes"]))
+
+        self.assertEqual(self.api.trajectory({"id": ["invalid-uuid"]})[0], 400)
+        self.assertEqual(self.api.trajectory({"id": ["00000000-0000-0000-0000-000000000000"]})[0], 404)
+
     def test_ticket_required_fresh_signed_single_use(self):
         p = self.public("티켓")
         self.assertEqual(self.save(p, ticket=None)[1].get("need"), "ticket")             # 없음

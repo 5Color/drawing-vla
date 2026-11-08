@@ -22,6 +22,7 @@ import json
 import math
 import platform
 import random
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dataset import HOME_STATE, OBS_SIZE, DrawingVLADataset, slice_action_chunk  # noqa: E402
-from policies import DiffusionPolicy, VisuomotorPolicy, build_policy  # noqa: E402,F401
+from policies import DiffusionPolicy, TransformerPolicy, VisuomotorPolicy, build_policy  # noqa: E402,F401
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "outputs"
@@ -43,7 +44,7 @@ PX = 512  # 오차를 512px 캔버스 기준 픽셀로 표시
 # 디바이스: Intel Arc XPU → CUDA → CPU
 # ---------------------------------------------------------------------------
 def pick_device() -> torch.device:
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
+    if os.environ.get("DEVICE") != "cpu" and hasattr(torch, "xpu") and torch.xpu.is_available():
         dev, name = torch.device("xpu"), torch.xpu.get_device_name(0)
     elif torch.cuda.is_available():
         dev, name = torch.device("cuda"), torch.cuda.get_device_name(0)
@@ -211,7 +212,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="사과 Action Chunking 정책 학습")
     ap.add_argument("--target", default="apple")
     ap.add_argument("--tag", default="", help="출력 파일 접미사 (예: v3 → apple_vla_policy_v3.pth)")
-    ap.add_argument("--head", choices=["mlp", "diffusion"], default="mlp")
+    ap.add_argument("--head", choices=["mlp", "diffusion", "transformer"], default="mlp")
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--lr", type=float, default=None, help="기본: mlp 1e-3 고정, diffusion 3e-4 + 코사인 감쇠")
@@ -236,7 +237,8 @@ def main() -> int:
 
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     diffusion = args.head == "diffusion"
-    lr = args.lr or (3e-4 if diffusion else 1e-3)
+    is_decay = diffusion or args.head == "transformer"
+    lr = args.lr or (3e-4 if is_decay else 1e-3)
 
     # 에피소드 단위 Train/Val 분할 (같은 그림의 인접 스텝이 양쪽에 섞이지 않게)
     files = sorted((ROOT / "data" / "raw").glob(f"demo_{args.target}_*.json"))
@@ -278,13 +280,15 @@ def main() -> int:
            "normalize_strokes": args.normalize_strokes}
     if diffusion:
         cfg["diffusion"] = {"hidden": 512, "n_blocks": 4, "train_steps": 100, "infer_steps": 10, "noise_repeats": 4}
+    elif args.head == "transformer":
+        cfg["transformer"] = {"d_model": 256, "nhead": 4, "num_layers": 3, "dim_feedforward": 512}
     model = build_policy(cfg).to(dev)
     ema = copy.deepcopy(model).eval() if diffusion else None
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     steps_per_epoch = math.ceil(len(train_idx) / args.stride / args.batch_size)
     total_steps, warmup = steps_per_epoch * args.epochs, 300
     sched = torch.optim.lr_scheduler.LambdaLR(opt, (lambda s: min(1.0, (s + 1) / warmup) * 0.5 * (1 + math.cos(math.pi * min(1.0, s / total_steps))))
-                                              if diffusion else (lambda s: 1.0))
+                                              if is_decay else (lambda s: 1.0))
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[model] head={args.head} channels={tuple(cfg['channels'])} state_dim={cfg['state_dim']}"
           f" state_embed={cfg['state_embed']} resample={args.resample_step} aug={cfg['aug']}"

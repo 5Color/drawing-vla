@@ -190,9 +190,79 @@ class DiffusionPolicy(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# v5: Transformer 기반 어텐션 헤드 (ACT 스타일 Action Chunking)
+# ---------------------------------------------------------------------------
+class ConvSpatialEncoder(nn.Module):
+    """(B, 2, 128, 128) → (B, N_patches, d_model) 공간 토큰 시퀀스."""
+    def __init__(self, channels=(32, 64, 128, 256), d_model: int = 256):
+        super().__init__()
+        layers, c_in = [], 2
+        for c in channels:
+            layers += [nn.Conv2d(c_in, c, 3, padding=1, bias=False), nn.BatchNorm2d(c), nn.ReLU(inplace=True), nn.MaxPool2d(2)]
+            c_in = c
+        self.conv = nn.Sequential(*layers)
+        self.proj = nn.Conv2d(c_in, d_model, 1)
+
+    def forward(self, x):
+        h = self.proj(self.conv(x))  # (B, d_model, 8, 8)
+        return h.flatten(2).permute(0, 2, 1)  # (B, 64, d_model)
+
+
+class TransformerPolicy(nn.Module):
+    head_type = "transformer"
+
+    def __init__(self, chunk_size: int = CHUNK_SIZE, channels=(32, 64, 128, 256), d_model: int = 256,
+                 obs_size: int = OBS_SIZE, state_dim: int = 3, nhead: int = 4, num_layers: int = 3,
+                 dim_feedforward: int = 512, pen_up_weight: float = 10.0, **kwargs):
+        super().__init__()
+        self.chunk_size = chunk_size
+        self.state_dim = state_dim
+        self.pen_up_weight = pen_up_weight
+        self.encoder = ConvSpatialEncoder(channels, d_model)
+        
+        self.state_proj = nn.Linear(state_dim, d_model) if state_dim else None
+        self.action_queries = nn.Parameter(torch.randn(1, chunk_size, d_model) * 0.02)
+        
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward,
+            dropout=0.0, activation="relu", batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.out_proj = nn.Linear(d_model, 3)
+
+    def forward(self, obs, state=None):
+        B = obs.shape[0]
+        vis_tokens = self.encoder(obs)  # (B, 64, d_model)
+        
+        if self.state_proj is not None and state is not None:
+            state_token = self.state_proj(state).unsqueeze(1)  # (B, 1, d_model)
+            memory = torch.cat([vis_tokens, state_token], dim=1)
+        else:
+            memory = vis_tokens
+
+        queries = self.action_queries.expand(B, -1, -1)  # (B, 16, d_model)
+        h = self.decoder(tgt=queries, memory=memory)      # (B, 16, d_model)
+        out = self.out_proj(h)                           # (B, 16, 3)
+        
+        return torch.sigmoid(out[..., :2]), out[..., 2]  # xy ∈ [0,1], pen logits
+
+    def loss(self, obs, state, action):
+        xy, logit = self(obs, state)
+        loss, l_xy, l_pen = policy_loss(xy, logit, action, self.pen_up_weight)
+        return loss, {"xy": l_xy, "pen": l_pen}
+
+    @torch.no_grad()
+    def predict(self, obs, state=None):
+        xy, logit = self(obs, state)
+        return xy, torch.sigmoid(logit)
+
+
+# ---------------------------------------------------------------------------
 def build_policy(cfg: dict) -> nn.Module:
     common = {"chunk_size": cfg["chunk_size"], "channels": tuple(cfg["channels"]), "obs_size": cfg["obs_size"],
               "state_dim": cfg.get("state_dim", 0), "state_embed": cfg.get("state_embed", 0)}
     if cfg.get("head", "mlp") == "diffusion":
         return DiffusionPolicy(**common, **cfg.get("diffusion", {}))
+    if cfg.get("head") == "transformer":
+        return TransformerPolicy(**common, pen_up_weight=cfg.get("pen_up_weight", 10.0), **cfg.get("transformer", {}))
     return VisuomotorPolicy(**common, pen_up_weight=cfg.get("pen_up_weight", 1.0))
