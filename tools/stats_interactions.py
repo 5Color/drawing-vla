@@ -53,7 +53,7 @@ def main():
         rows = []
 
     print(f"\n=======================================================")
-    print(f"📊 드로잉 인터랙션 및 상호작용 통계 (최근 {len(rows)}건 분석)")
+    print(f"📊 드로잉 인터랙션 및 물리 제어 통계 (최근 {len(rows)}건 분석)")
     print(f"=======================================================\n")
 
     if not rows:
@@ -69,6 +69,9 @@ def main():
 
     durations = []
     pauses = []
+    active_pauses = []
+    first_delays = []
+    blurs = []
     scores = []
     errors = []
     input_counts = {"mouse": 0, "pen": 0, "touch": 0, "other": 0}
@@ -106,6 +109,13 @@ def main():
         if span_ms and draw_ms:
             pauses.append(max(0.0, span_ms - draw_ms) / 1000)
 
+        if checks.get("active_pause_ms") is not None:
+            active_pauses.append(checks["active_pause_ms"] / 1000)
+        if meta.get("first_stroke_delay_ms") is not None:
+            first_delays.append(meta["first_stroke_delay_ms"] / 1000)
+        if meta.get("blur_ms") is not None and meta["blur_ms"] > 0:
+            blurs.append(meta["blur_ms"] / 1000)
+
         # 점수/오차
         if r.get("score") is not None:
             scores.append(float(r["score"]))
@@ -126,7 +136,13 @@ def main():
         print(f"   - 순수 드로잉 시간: {avg_dur:.1f}초 (최대 {max(durations):.1f}초)")
     if pauses:
         avg_pause = sum(pauses) / len(pauses)
-        print(f"   - 획 사이 고민 시간: {avg_pause:.1f}초 (인간 지문 망설임)")
+        print(f"   - 획 사이 고민 시간(Pause): {avg_pause:.1f}초")
+    if active_pauses:
+        print(f"   - 딴짓 제외 순수 인지 지연: {sum(active_pauses) / len(active_pauses):.1f}초")
+    if first_delays:
+        print(f"   - 첫 획 탐색 시간(Global Planning): {sum(first_delays) / len(first_delays):.1f}초")
+    if blurs:
+        print(f"   - 탭 이탈(알트탭/딴짓) 발생 비율: {len(blurs)}/{total_count}건 (평균 이탈 {sum(blurs)/len(blurs):.1f}초)")
 
     print(f"\n3. 🎯 점수 및 정밀도:")
     if scores:

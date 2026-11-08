@@ -310,7 +310,7 @@ def save(headers, body: bytes, peer: str | None = None) -> Response:
     payload["trajectory"] = sub.build_trajectory(payload["strokes"])
     payload["target_128_png"] = sub.canonical_target(target) or payload["target_128_png"]
     sc = scoring.score_trajectory(target, payload["trajectory"])
-    flags, measures = sub.human_checks(payload["strokes"], sc["avg_error"])
+    flags, measures = sub.human_checks(payload["strokes"], sc["avg_error"], blur_ms=float(meta.get("blur_ms") or 0.0))
     measures["time_repair_ms"] = meta.pop("time_repair_ms", 0)
     if measures["time_repair_ms"] > sub.MAX_TIME_REPAIR_MS:   # 0.5초 넘게 거꾸로 = 이벤트 섞임으로 볼 수 없음
         flags = sorted(set(flags) | {"time_backwards"})

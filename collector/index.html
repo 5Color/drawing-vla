@@ -211,6 +211,8 @@
   .replay { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); padding: 0;
             background: var(--raised); color: var(--text); font-size: 13px; cursor: pointer; }
   .replay:active { background: var(--line); }
+  .speed-btn { padding: 2px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; }
+  .speed-btn:hover { color: var(--text); border-color: var(--mark); }
   .verdict { text-align: center; font-weight: 700; font-size: 15px; color: var(--text) !important; }
   .card-wrap { text-align: center; }
   .card-wrap summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 2px 0; }
@@ -466,7 +468,7 @@
     <h3 id="resultTitle">결과</h3>
     <div class="vs">
       <figure><canvas id="vsMe" width="300" height="300" aria-label="내가 그린 그림"></canvas><figcaption>나 <b id="vsMeScore">–</b></figcaption></figure>
-      <div class="vs-mid">VS<button class="replay" id="btnReplay" type="button" aria-label="나와 AI가 그리는 과정 다시 보기" title="다시 보기"><i data-px="play"></i></button></div>
+      <div class="vs-mid">VS<button class="replay" id="btnReplay" type="button" aria-label="나와 AI가 그리는 과정 다시 보기" title="다시 보기"><i data-px="play"></i></button><button class="speed-btn" id="btnSpeed" type="button" title="재생 속도 (1x/2x/3x)">2x</button></div>
       <figure><canvas id="vsAi" width="300" height="300" aria-label="AI가 그린 그림"></canvas><figcaption>AI <b id="vsAiScore">–</b></figcaption></figure>
     </div>
     <p class="verdict" id="vsVerdict"></p>
@@ -1092,6 +1094,9 @@ inkCv.addEventListener('pointerdown', e => {
   rect = inkCv.getBoundingClientRect();
   if (t0 === null) {
     t0 = e.timeStamp;
+    if (firstStrokeDelayMs === null) {
+      firstStrokeDelayMs = Math.max(0, Math.round(performance.now() - tMount));
+    }
     if (hosted && (!ticket || Date.now() - ticketAt > TICKET_REFRESH_MS)) fetchTicket();
   }
   if (!startSent) { startSent = true; setTimeout(beacon, 0, 'start'); }   // 이번 그림의 첫 획 (통계는 입력 처리 뒤로)
@@ -1200,7 +1205,23 @@ function undo() {
 }
 let clearTimer = null;
 let undoButtonCount = 0, undoKeyCount = 0, clearCount = 0;
-function resetCounters() { undoButtonCount = 0; undoKeyCount = 0; clearCount = 0; }
+let tMount = performance.now();
+let firstStrokeDelayMs = null;
+let blurMs = 0, blurStart = null;
+
+function onTabBlur() { if (blurStart === null) blurStart = performance.now(); }
+function onTabFocus() {
+  if (blurStart !== null) { blurMs += performance.now() - blurStart; blurStart = null; }
+}
+window.addEventListener('blur', onTabBlur);
+window.addEventListener('focus', onTabFocus);
+document.addEventListener('visibilitychange', () => { if (document.hidden) onTabBlur(); else onTabFocus(); });
+
+function resetCounters() {
+  undoButtonCount = 0; undoKeyCount = 0; clearCount = 0;
+  tMount = performance.now(); firstStrokeDelayMs = null;
+  blurMs = 0; blurStart = null;
+}
 function disarmClear() {
   clearTimeout(clearTimer); clearTimer = null;
   setLabel(btnClear, 'trash', '모두 지우기'); btnClear.classList.remove('armed');
@@ -1321,6 +1342,9 @@ function buildPayload() {
       undo_button_count: undoButtonCount,
       undo_key_count: undoKeyCount,
       clear_count: clearCount,
+      first_stroke_delay_ms: firstStrokeDelayMs !== null ? firstStrokeDelayMs : 0,
+      blur_ms: Math.round(blurMs + (blurStart !== null ? performance.now() - blurStart : 0)),
+      active_duration_ms: Math.max(0, Math.round(last[last.length - 1][2] - (blurMs + (blurStart !== null ? performance.now() - blurStart : 0)))),
       duration_ms: last[last.length - 1][2],
       guide_opacity: Number(opacity.value),
       guide_order_marks: false,
@@ -1537,13 +1561,15 @@ function drawDrawing(c, x, y, size, key, strokeList, color, lineW) {
 // 나: 실제 시각(t_ms)을 그대로 배속 재생 (머뭇거림·속도 차이가 보임), 너무 길면 4초 안에 끝나게
 // AI: 정책이 실행한 순서대로 일정한 속도로 2.5초 (사람 시각이 없으므로)
 let vsAnim = 0;
-function playVs(key, myStrokes, myColor, aiTraj) {
+let replaySpeed = 2; // 1 | 2 | 3
+function playVs(key, myStrokes, myColor, aiTraj, speed = replaySpeed) {
   cancelAnimationFrame(vsAnim);
   const me = $('vsMe').getContext('2d'), aiCtx = $('vsAi').getContext('2d'), T = $('vsMe').width;
   const t0s = myStrokes.length ? myStrokes[0][0][2] : 0;
   const tEnd = myStrokes.length ? Math.max(...myStrokes.map(s => s[s.length - 1][2])) - t0s : 0;
-  const meDur = Math.min(4000, Math.max(1500, tEnd / 2));   // 기본 2배속, 1.5~4초
-  const aiDur = 2500, total = Math.max(meDur, aiDur);
+  const speedScale = speed || 2;
+  const meDur = Math.max(800, tEnd / speedScale);   // 배속 적용
+  const aiDur = Math.max(800, 2500 / (speedScale / 2)), total = Math.max(meDur, aiDur);
   let prevMe = -1, prevAi = -1;
   const drawAt = ms => {
     const u = t0s + tEnd * Math.min(1, ms / meDur);          // 지금까지 재생된 '실제 시각'
@@ -1568,7 +1594,13 @@ function playVs(key, myStrokes, myColor, aiTraj) {
 }
 $('btnReplay').addEventListener('click', () => {
   const r = lastResult, ai = aiFor(r.template);
-  playVs(r.template, lastDrawing.strokes, TIER_COLOR[r.tier], ai ? ai.traj : null);
+  playVs(r.template, lastDrawing.strokes, TIER_COLOR[r.tier], ai ? ai.traj : null, replaySpeed);
+});
+$('btnSpeed').addEventListener('click', () => {
+  replaySpeed = replaySpeed === 1 ? 2 : replaySpeed === 2 ? 3 : 1;
+  $('btnSpeed').textContent = `${replaySpeed}x`;
+  const r = lastResult, ai = aiFor(r.template);
+  if (r && lastDrawing) playVs(r.template, lastDrawing.strokes, TIER_COLOR[r.tier], ai ? ai.traj : null, replaySpeed);
 });
 
 // 기록 미인정 사유를 쉬운 말로 (서버 사유: 70점 미만 / 채움률 75% 미만 / 정밀도 75% 미만 / 획 수 …)

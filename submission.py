@@ -38,7 +38,7 @@ MAX_STROKE_MS = 10 * 60 * 1000
 MAX_PNG_BYTES = 16 * 1024     # 128×128 PNG는 실측 3~4.5KB
 META_STR = {"target", "target_label", "session_id", "created_at", "input_type", "smoothing", "nickname", "notice",
             "guide_hint"}   # guide_hint: 다음 획 안내 버전('next-v1') 또는 'off' — 획 순서별로 학습 데이터를 나눌 때
-META_NUM = {"episode_index", "num_strokes", "num_steps", "duration_ms", "guide_opacity", "undo_count", "undo_button_count", "undo_key_count", "clear_count"}
+META_NUM = {"episode_index", "num_strokes", "num_steps", "duration_ms", "guide_opacity", "undo_count", "undo_button_count", "undo_key_count", "clear_count", "first_stroke_delay_ms", "blur_ms", "active_duration_ms"}
 META_BOOL = {"guide_order_marks", "has_pressure"}
 DEVICE_KEYS = {"user_agent", "pointer_types", "device_pixel_ratio", "board_css_px", "screen_css_px"}
 SPEC = {   # 수집기 spec과 같은 값 (클라이언트가 보낸 spec은 쓰지 않음)
@@ -249,7 +249,7 @@ def traj_hash(strokes) -> str:
 # ---------------------------------------------------------------------------
 # 사람 손 검사
 # ---------------------------------------------------------------------------
-def human_checks(strokes, avg_error_px: float) -> tuple[list[str], dict]:
+def human_checks(strokes, avg_error_px: float, blur_ms: float = 0.0) -> tuple[list[str], dict]:
     """(걸린 항목 목록, 측정값). 목록이 비어 있으면 통과."""
     flags = []
     draw_ms, length, peak, prev_end = 0.0, 0.0, 0.0, -1.0
@@ -285,6 +285,9 @@ def human_checks(strokes, avg_error_px: float) -> tuple[list[str], dict]:
     if avg_error_px < MIN_AVG_ERROR_PX:
         flags.append("too_perfect")
     pause_ms = max(0.0, span_ms - draw_ms)
-    m = {"draw_ms": round(draw_ms, 1), "span_ms": round(span_ms, 1), "pause_ms": round(pause_ms, 1), "avg_speed": round(avg_speed, 3),
+    active_pause_ms = max(0.0, pause_ms - (blur_ms or 0.0))
+    m = {"draw_ms": round(draw_ms, 1), "span_ms": round(span_ms, 1), "pause_ms": round(pause_ms, 1),
+         "active_pause_ms": round(active_pause_ms, 1), "blur_ms": round(blur_ms or 0.0, 1),
+         "avg_speed": round(avg_speed, 3),
          "peak_speed": round(peak, 3), "rate": round(rate, 1)}
     return sorted(set(flags)), m
