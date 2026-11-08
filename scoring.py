@@ -308,7 +308,47 @@ def _agreement(tpts, drawn, tol: float) -> tuple[float, float, float]:
     return cov, prec, f1
 
 
-def shape_similarity(tpts: list[tuple[float, float]], drawn: list[tuple[float, float]]) -> tuple[float, float, float]:
+def tangent_cosine_similarity(parts: tuple, runs: list[list[tuple[float, float]]]) -> float:
+    """궤적의 진행 방향 벡터와 도안의 접선 벡터 간의 평균 코사인 유사도 (0.0 ~ 1.0).
+    사용자가 도안보다 작거나 위치가 달라도, 곡선이 흘러가는 각도/회전이 도안과 닮았는가를 평가한다."""
+    if not runs:
+        return 0.0
+    # 도안 선분 단위 벡터 풀
+    tpl_segs: list[tuple[tuple[float, float], tuple[float, float], float, float]] = []
+    for part in parts:
+        for a, b in zip(part, part[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            L = math.hypot(dx, dy)
+            if L > 1e-4:
+                tpl_segs.append((a, b, dx / L, dy / L))
+    if not tpl_segs:
+        return 0.0
+
+    cos_sims = []
+    for run in runs:
+        if len(run) < 2:
+            continue
+        for p1, p2 in zip(run, run[1:]):
+            vx, vy = p2[0] - p1[0], p2[1] - p1[1]
+            v_len = math.hypot(vx, vy)
+            if v_len < 1e-3:
+                continue
+            vx, vy = vx / v_len, vy / v_len
+            # 가장 가까운 도안 선분의 접선 찾기
+            best_dist, best_cos = float("inf"), 0.0
+            mid_p = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+            for a, b, ux, uy in tpl_segs:
+                d = _seg_dist(mid_p, a, b)
+                if d < best_dist:
+                    best_dist = d
+                    # 양방향 그리기(시계/반시계) 모두 인정: abs(dot)
+                    best_cos = abs(ux * vx + uy * vy)
+            cos_sims.append(best_cos)
+
+    return sum(cos_sims) / len(cos_sims) if cos_sims else 0.0
+
+
+def shape_similarity(tpts: list[tuple[float, float]], drawn: list[tuple[float, float]], parts: tuple = ()) -> tuple[float, float, float]:
     """도안과 그린 선의 중심/스케일을 정규화하여 형태 자체의 일치도를 측정 (자유 드로잉 형태 평가)."""
     if not drawn or not tpts:
         return 0.0, 0.0, 0.0
@@ -318,29 +358,30 @@ def shape_similarity(tpts: list[tuple[float, float]], drawn: list[tuple[float, f
     dw, dh = max(dxs) - min(dxs), max(dys) - min(dys)
     tw, th = max(txs) - min(txs), max(tys) - min(tys)
 
-    if dw < 0.08 or dh < 0.08 or tw < 0.05 or th < 0.05:
+    if dw < 0.05 or dh < 0.05 or tw < 0.05 or th < 0.05:
         return 0.0, 0.0, 0.0
 
     aspect_ratio = (dw / dh) / (tw / th) if dh > 0 and th > 0 else 1.0
-    if not (0.45 <= aspect_ratio <= 2.2):
+    if not (0.35 <= aspect_ratio <= 2.8):
         return 0.0, 0.0, 0.0
 
     dcx, dcy = (min(dxs) + max(dxs)) / 2, (min(dys) + max(dys)) / 2
     tcx, tcy = (min(txs) + max(txs)) / 2, (min(tys) + max(tys)) / 2
     scale = (tw / dw + th / dh) / 2
     aligned = [(tcx + (x - dcx) * scale, tcy + (y - dcy) * scale) for x, y in drawn]
-    return _agreement(tpts, aligned, TOL * 1.5)
+    return _agreement(tpts, aligned, TOL * 1.8)
 
 
 def score_trajectory(template: str, traj) -> dict:
     parts = template_parts(template)
     tpts = [p for part in parts for p in part]
     drawn = pen_down_points(traj)
+    runs = pen_down_runs(traj)
     strokes = count_strokes(traj)
     cov, prec, f1_10 = _agreement(tpts, drawn, TOL)
     _, _, f1_5 = _agreement(tpts, drawn, NARROW_TOL)
     score = to_score((f1_10 + f1_5) / 2)
-    err = avg_error(parts, pen_down_runs(traj))
+    err = avg_error(parts, runs)
     max_strokes = 2 * len(parts) + 2
 
     part_covs = []
@@ -352,13 +393,21 @@ def score_trajectory(template: str, traj) -> dict:
         part_covs = [0.0] * len(parts)
     min_part_cov = min(part_covs) if part_covs else 0.0
 
-    # 형태 유사도 측정 (가이드선과 크기/위치가 살짝 달라도 형태가 예쁘면 구제)
-    s_cov, s_prec, s_f1 = shape_similarity(tpts, drawn)
+    # 1. 크기·위치 정규화 기하 형태 유사도 (Procrustes)
+    s_cov, s_prec, s_f1 = shape_similarity(tpts, drawn, parts)
+    # 2. 진행 방향 벡터 코사인 유사도 (Tangent Cosine)
+    tan_cos = tangent_cosine_similarity(parts, runs)
+
+    # 통합 형태 유사도 (0.0 ~ 1.0)
+    shape_score = 0.6 * s_f1 + 0.4 * tan_cos
+
+    # 자유 예술가 구제 조건:
+    # 형태가 매우 훌륭하고(s_f1 >= 0.65 또는 shape_score >= 0.65), 그린 선의 밀도가 최소 35% 이상이면
+    # 가이드선보다 작게 그렸거나 살짝 치우쳤더라도 정상 통과(자유 예술가)로 인정!
     is_freestyle_qualified = (
-        s_f1 >= 0.70
-        and cov >= 0.40
-        and prec >= 0.40
-        and (len(parts) <= 1 or min_part_cov >= 0.30)
+        (s_f1 >= 0.65 or shape_score >= 0.65)
+        and cov >= 0.35
+        and prec >= 0.35
         and (1 <= strokes <= max_strokes)
     )
 
@@ -381,14 +430,14 @@ def score_trajectory(template: str, traj) -> dict:
         if not is_freestyle_qualified:
             reason = f"10px 일치도 {int(QUALIFY_F1 * 100)}% 미만"
 
-    # 자유 예술가 구제 시 점수/티어 보정
+    # 자유 예술가 구제 시 점수/티어 보정 (B급 자유 화백 75~85점)
     if is_freestyle_qualified and score < 70.0:
-        score = max(score, round(s_f1 * 80.0, 1))
+        score = max(score, round(shape_score * 85.0, 1))
 
     tier, label, label_en = tier_for(score)
     return {"score": score, "tier": tier, "tier_label": label, "tier_label_en": label_en,
             "score_version": SCORE_VERSION,
             "f1": round(f1_10, 4), "f1_10": round(f1_10, 4), "f1_5": round(f1_5, 4),
             "coverage": round(cov, 4), "part_coverage": [round(c, 4) for c in part_covs], "precision": round(prec, 4), "avg_error": err,
-            "shape_f1": round(s_f1, 4),
+            "shape_f1": round(s_f1, 4), "tangent_cos": round(tan_cos, 4), "shape_score": round(shape_score, 4),
             "strokes": strokes, "qualified": reason is None, "reason": reason}
