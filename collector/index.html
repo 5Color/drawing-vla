@@ -1740,7 +1740,15 @@ function showResult(r) {
   $('cardWrap').open = false;
   drawShareCard($('cardPreview'), r, lastDrawing);
   prepareShareFile(r);
-  $('resultModal').classList.add('open'); syncModalOpen();
+  const rm = $('resultModal');
+  const sheet = rm.querySelector('.sheet');
+  rm.classList.add('open'); syncModalOpen();
+  if (sheet) sheet.scrollTop = 0;
+  rm.scrollTop = 0;
+  requestAnimationFrame(() => {
+    if (sheet) sheet.scrollTop = 0;
+    rm.scrollTop = 0;
+  });
   if (hosted) {   // 저장 응답에 담긴 최신 리더보드 (CDN 캐시와 무관하게 방금 기록이 보임)
     lbInput.lbListModal = '';
     renderTabs($('lbTabsModal'), 'lbListModal', () => {
@@ -1891,7 +1899,11 @@ $('btnShare').addEventListener('click', () => {
 function closeResultModal() {
   cancelAnimationFrame(vsAnim);
   cancelAnimationFrame(countAnim);
-  $('resultModal').classList.remove('open');
+  const rm = $('resultModal');
+  const sheet = rm.querySelector('.sheet');
+  if (sheet) sheet.scrollTop = 0;
+  rm.scrollTop = 0;
+  rm.classList.remove('open');
   syncModalOpen();
 }
 $('btnNext').addEventListener('click', () => {

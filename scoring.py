@@ -402,12 +402,13 @@ def score_trajectory(template: str, traj) -> dict:
     shape_score = 0.6 * s_f1 + 0.4 * tan_cos
 
     # 자유 예술가 구제 조건:
-    # 형태가 매우 훌륭하고(s_f1 >= 0.65 또는 shape_score >= 0.65), 그린 선의 밀도가 최소 35% 이상이면
-    # 가이드선보다 작게 그렸거나 살짝 치우쳤더라도 정상 통과(자유 예술가)로 인정!
+    # 1. 일반 형태 일치: (s_f1 >= 0.65 or shape_score >= 0.65) and cov >= 0.35 and prec >= 0.35
+    # 2. 고품질 소형 드로잉: shape_score >= 0.80 and cov >= 0.12 and prec >= 0.12 (크기가 작거나 아담해도 형태/코사인이 완벽하면 인정!)
     is_freestyle_qualified = (
-        (s_f1 >= 0.65 or shape_score >= 0.65)
-        and cov >= 0.35
-        and prec >= 0.35
+        (
+            ((s_f1 >= 0.65 or shape_score >= 0.65) and cov >= 0.35 and prec >= 0.35)
+            or (shape_score >= 0.80 and cov >= 0.12 and prec >= 0.12)
+        )
         and (1 <= strokes <= max_strokes)
     )
 
