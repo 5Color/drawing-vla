@@ -118,5 +118,18 @@ class TestBScoring(unittest.TestCase):
                 self.assertFalse(result["qualified"])
 
 
+    def test_spurious_stroke_adversarial_rejection(self):
+        # Even if precision is high from drawing many points on the target line,
+        # an extra spurious doodle stroke far away should be detected and rejected.
+        target = horizontal_parts(0.5)
+        # 500 points along target line (high coverage and precision) + 1 doodle line at y=0.1 (far away)
+        dense_target_stroke = tuple((0.2 + k * 0.001, 0.5) for k in range(500))
+        doodle_stroke = tuple((0.3 + k * 0.005, 0.1) for k in range(30))
+        result = self.score_lines(target, (dense_target_stroke, doodle_stroke))
+        self.assertFalse(result["qualified"])
+        self.assertIn("도안과 무관한", result["reason"])
+        self.assertLessEqual(result["score"], 65.0)
+
+
 if __name__ == "__main__":
     unittest.main()

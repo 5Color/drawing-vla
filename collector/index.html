@@ -270,6 +270,7 @@
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     font-size: 12px; animation: ghostFadeIn .2s ease-out;
   }
+  .ghost-bar[hidden] { display: none !important; }
   @keyframes ghostFadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
   .ghost-info { display: flex; align-items: center; gap: 6px; min-width: 0; }
   .ghost-icon { font-size: 14px; }
@@ -436,7 +437,7 @@
         <div class="ghost-info">
           <span class="ghost-icon">👑</span>
           <div class="ghost-text">
-            <b id="ghostNick">장인</b>
+            <b id="ghostNick">1위</b>
             <span id="ghostScore">100.0점</span>
           </div>
         </div>
@@ -2146,7 +2147,7 @@ function toggleGhostPin() {
     pinBtn.textContent = '고정 해제';
     pinBtn.classList.add('active');
     renderPinnedGhost();
-    showToast('장인의 궤적이 가이드로 고정되었어요! 따라 그려보세요.', 'ok', 2500);
+    showToast('1위 챔피언의 궤적이 가이드로 고정되었어요! 따라 그려보세요.', 'ok', 2500);
   } else {
     pinBtn.textContent = '가이드 고정';
     pinBtn.classList.remove('active');

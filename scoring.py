@@ -372,6 +372,30 @@ def shape_similarity(tpts: list[tuple[float, float]], drawn: list[tuple[float, f
     return _agreement(tpts, aligned, TOL * 1.8)
 
 
+def find_spurious_stroke(parts, runs) -> str | None:
+    """도안 가이드라인과 무관한 낙서/이탈 획을 감지한다."""
+    tpts = [p for part in parts for p in part]
+    if not tpts or not runs:
+        return None
+    for idx, run in enumerate(runs):
+        if not run:
+            continue
+        dists = [min(math.hypot(rx - tx, ry - ty) for tx, ty in tpts) * 512 for rx, ry in run]
+        # 1. 3점 이하 짧은 고립 점: 도안에서 30px 이상 떨어짐
+        if len(run) <= 3:
+            min_d = min(dists)
+            if min_d > 30.0:
+                return f"도안과 무관한 점 찍기 ({min_d:.1f}px 이탈)"
+            continue
+        # 2. 실질적 획: 획 점의 45% 이상이 18px 이상 떨어져 있고, 평균 오차 14px 이상 & 최대 이탈 25px 이상
+        avg_d = sum(dists) / len(dists)
+        far_ratio = sum(1 for d in dists if d > 18.0) / len(dists)
+        max_d = max(dists)
+        if far_ratio >= 0.45 and avg_d >= 14.0 and max_d >= 25.0:
+            return f"도안과 무관한 낙서/이탈 획 감지 (평균 {avg_d:.1f}px 오차)"
+    return None
+
+
 def score_trajectory(template: str, traj) -> dict:
     parts = template_parts(template)
     tpts = [p for part in parts for p in part]
@@ -412,6 +436,11 @@ def score_trajectory(template: str, traj) -> dict:
         and (1 <= strokes <= max_strokes)
     )
 
+    # 도안과 무관한 독립 낙서/이탈 획(spurious strokes) 검사
+    spurious_reason = find_spurious_stroke(parts, runs)
+    if spurious_reason:
+        is_freestyle_qualified = False
+
     reason = None
     if not 1 <= strokes <= max_strokes:
         reason = f"획 수 {strokes}개 (정상 1~{max_strokes}개)"
@@ -424,6 +453,8 @@ def score_trajectory(template: str, traj) -> dict:
     elif prec < QUALIFY_PRECISION:
         if not is_freestyle_qualified:
             reason = f"도안 정밀도 {int(QUALIFY_PRECISION * 100)}% 미만"
+    elif spurious_reason:
+        reason = spurious_reason
     elif score < QUALIFY_SCORE:
         if not is_freestyle_qualified:
             reason = f"{int(QUALIFY_SCORE)}점 미만"
@@ -431,8 +462,9 @@ def score_trajectory(template: str, traj) -> dict:
         if not is_freestyle_qualified:
             reason = f"10px 일치도 {int(QUALIFY_F1 * 100)}% 미만"
 
-    # 자유 예술가 구제 시 점수/티어 보정 (B급 자유 화백 75~85점)
-    if is_freestyle_qualified and score < 70.0:
+    if spurious_reason:
+        score = min(score, 65.0)  # 무관한 낙서 획이 있으면 C급(65점 이하)으로 감점
+    elif is_freestyle_qualified and score < 70.0:
         score = max(score, round(shape_score * 85.0, 1))
 
     tier, label, label_en = tier_for(score)
