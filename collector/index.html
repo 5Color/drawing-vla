@@ -392,6 +392,56 @@
     .nudge { font-size: 12px; }
   }
   #resultModal #btnNext { position: sticky; bottom: -18px; z-index: 2; box-shadow: 0 8px 0 8px var(--panel), 0 -10px 16px var(--panel); }
+  #confettiCv { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 99; display: none; }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; }
+  .dex-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .dex-stat { background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; text-align: center; }
+  .dex-stat span { display: block; font-size: 11px; color: var(--muted); }
+  .dex-stat b { font-size: 14px; font-variant-numeric: tabular-nums; }
+  .dex-sec-title { font-size: 12px; font-weight: 700; color: var(--muted); margin-top: 4px; }
+  .dex-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .dex-card {
+    background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer; transition: all .12s;
+  }
+  .dex-card:hover { border-color: var(--accent); background: #222b36; transform: translateY(-1px); }
+  .dex-card.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .dex-card .name { font-weight: 600; font-size: 13px; }
+  .dex-card .score-info { display: flex; align-items: center; gap: 5px; }
+  .dex-card .tier-tag {
+    font: 700 11px/1 ui-monospace, Consolas, monospace; padding: 2px 5px; border-radius: 4px;
+    background: rgba(255,255,255,0.1); color: var(--muted);
+  }
+  .dex-card .tier-tag[data-tier="S"] { background: rgba(255, 196, 50, 0.2); color: #ffc432; }
+  .dex-card .tier-tag[data-tier="A"] { background: rgba(90, 200, 255, 0.2); color: #5ac8ff; }
+  .dex-card .tier-tag[data-tier="B"] { background: rgba(140, 220, 140, 0.2); color: #8cdc8c; }
+  .dex-card .score { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 700; }
+  .titles-list { display: flex; flex-direction: column; gap: 4px; }
+  .title-item {
+    display: flex; align-items: center; justify-content: space-between; padding: 6px 10px;
+    border-radius: 8px; background: var(--raised); border: 1px solid var(--line); font-size: 12px;
+  }
+  .title-item.locked { opacity: .45; }
+  .title-item .title-info { display: flex; flex-direction: column; gap: 1px; }
+  .title-item .title-name { font-weight: 700; color: var(--text); }
+  .title-item .title-desc { font-size: 11px; color: var(--muted); }
+  .title-item button {
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; background: transparent;
+    color: var(--text); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+  }
+  .title-item button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .challenge-btn {
+    min-height: 42px; border-radius: 8px; font-size: 13.5px; font-weight: 700; cursor: pointer;
+    background: rgba(245, 158, 11, 0.12); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45);
+    display: flex; align-items: center; justify-content: center; gap: 6px; transition: all .12s;
+  }
+  .challenge-btn:hover { background: rgba(245, 158, 11, 0.22); border-color: #fbbf24; }
+  .challenge-btn:active { transform: scale(.98); }
+  .chal-banner {
+    background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px;
+    padding: 6px 10px; font-size: 12.5px; font-weight: 600; color: #fbbf24; text-align: center;
+  }
+
   @media (max-width: 600px), (max-height: 860px) {
     #resultModal .sheet { padding: 14px; gap: 9px; }
     #resultModal .vs canvas { width: min(100%, 112px); }
@@ -419,6 +469,7 @@
     <div class="titlebar">
       <h1>AI를 이겨라! 내 손 드로잉 정밀도 테스트</h1>
       <div class="badges">
+        <button class="badge icon-btn" id="btnDex" type="button" title="도감 & 칭호" aria-label="도감"><i data-px="trophy" data-cls="gold"></i> <span id="dexBadgeTxt">도감</span></button>
         <button class="badge icon-btn" id="btnSound" type="button"></button>
         <span class="badge ep" id="epBadge">EP 001</span>
         <span class="badge status" id="srvBadge" data-state="checking">확인 중</span>
@@ -533,6 +584,24 @@
   </details>
   <footer class="footer">실시간 랭킹 등록 및 AI 대결 기능을 위해 플레이 궤적이 저장됩니다. <button id="btnForget" type="button">[내 기록 삭제]</button></footer>
 </main>
+<canvas id="confettiCv"></canvas>
+<div class="modal" id="dexModal" role="dialog" aria-modal="true" aria-labelledby="dexTitle">
+  <div class="sheet">
+    <div class="modal-head">
+      <h3 id="dexTitle">🏆 도안 도감 & 칭호</h3>
+      <button class="ghost-btn close" id="btnDexClose" type="button" aria-label="닫기">✕</button>
+    </div>
+    <div class="dex-summary">
+      <div class="dex-stat"><span>수집 진행도</span><b id="dexProgress">0/10</b></div>
+      <div class="dex-stat"><span>S급 달성</span><b id="dexSCount" style="color:var(--mark)">0개</b></div>
+      <div class="dex-stat"><span>대표 칭호</span><b id="dexCurTitle">비기너</b></div>
+    </div>
+    <div class="dex-sec-title">도안 목록 (누르면 바로 이동)</div>
+    <div class="dex-grid" id="dexGrid"></div>
+    <div class="dex-sec-title">업적 칭호</div>
+    <div class="titles-list" id="titlesList"></div>
+  </div>
+</div>
 <div class="modal" id="nickModal" role="dialog" aria-modal="true" aria-labelledby="nickTitle">
   <div class="sheet">
     <h3 id="nickTitle">닉네임을 정해 주세요</h3>
@@ -567,6 +636,7 @@
       <button class="btn" id="btnDownload" type="button">카드 저장</button>
       <button class="btn primary" id="btnShare" type="button">공유하기</button>
     </div>
+    <button class="challenge-btn" id="btnChallenge" type="button">⚔️ 친구에게 1:1 대결 도전장 보내기</button>
     <details class="card-wrap" id="cardWrap">
       <summary>공유 이미지 미리보기</summary>
       <canvas id="cardPreview" width="1080" height="1080" aria-label="공유용 결과 이미지"></canvas>
@@ -800,6 +870,68 @@ function renderSoundBtn() {
 soundBtn.addEventListener('click', () => { Sound.toggle(); renderSoundBtn(); });
 renderSoundBtn();
 addEventListener('pointerdown', () => Sound.unlock(), { once: true, capture: true });
+
+function haptic(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch { }
+}
+
+let confettiAnim = null;
+function triggerConfetti() {
+  const cv = $('confettiCv');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = cv.width = window.innerWidth * dpr;
+  const h = cv.height = window.innerHeight * dpr;
+  cv.style.display = 'block';
+
+  const colors = ['#ffc432', '#5ac8ff', '#8cdc8c', '#ff5252', '#c084fc', '#f59e0b', '#38bdf8'];
+  const particles = Array.from({ length: 65 }, () => ({
+    x: (0.25 + Math.random() * 0.5) * w,
+    y: 0.35 * h,
+    vx: (Math.random() - 0.5) * 16 * dpr,
+    vy: (-8 - Math.random() * 12) * dpr,
+    size: (6 + Math.random() * 6) * dpr,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    rotation: Math.random() * Math.PI * 2,
+    vRot: (Math.random() - 0.5) * 0.2,
+    alpha: 1,
+  }));
+
+  if (confettiAnim) cancelAnimationFrame(confettiAnim);
+  const startTime = performance.now();
+  const duration = 2500;
+
+  function frame(now) {
+    const elapsed = now - startTime;
+    if (elapsed > duration) {
+      cv.style.display = 'none';
+      ctx.clearRect(0, 0, w, h);
+      confettiAnim = null;
+      return;
+    }
+    const fade = elapsed > 1700 ? 1 - (elapsed - 1700) / 800 : 1;
+    ctx.clearRect(0, 0, w, h);
+
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.32 * dpr;
+      p.vx *= 0.985;
+      p.rotation += p.vRot;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.alpha * fade);
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rotation);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
+      ctx.restore();
+    }
+    confettiAnim = requestAnimationFrame(frame);
+  }
+  confettiAnim = requestAnimationFrame(frame);
+}
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem('vla.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -1129,6 +1261,8 @@ document.addEventListener('pointerdown', e => {
 function afterBoot() {
   if (booted) return;
   booted = true;
+  updateTitleBadge();
+  checkChallengeUrl();
   if (demoRun || demoTimer || hint.dismissed) return;
   scheduleDemo(true, 450);
 }
@@ -1238,7 +1372,7 @@ function finishStroke(e, cancelled) {
   }
   delete s.drawn;
   strokes.push(s);
-  Sound.stroke();
+  Sound.stroke(); haptic(8);
   redrawInk();
   renderObsCanvas();
   updateStats();
@@ -1368,6 +1502,7 @@ function saveRecord(key, r) {
   return !!prev && beat;
 }
 function renderRecords() {
+  updateTitleBadge();
   const all = myRecords(), keys = Object.keys(TEMPLATES).filter(k => all[k]);
   $('recSec').hidden = !keys.length;
   $('recList').replaceChildren(...keys.map(k => {
@@ -1712,7 +1847,9 @@ function showResult(r) {
   const isRecord = saveRecord(key, r);
   setFlag('firstDone');
   beacon('result');
-  countUp(r, isRecord ? () => Sound.record(0.7) : null);
+  countUp(r, isRecord ? () => { Sound.record(0.7); triggerConfetti(); haptic([30, 40, 60, 40, 100]); } : null);
+  if (r.tier === 'S' && !isRecord) { triggerConfetti(); haptic([30, 40, 50, 40, 90]); }
+  applyChallengeResult(r);
   const me = $('vsMe').getContext('2d'), aiCtx = $('vsAi').getContext('2d'), T = $('vsMe').width;
   $('btnReplay').hidden = false;
   if (ai) {
@@ -1721,7 +1858,7 @@ function showResult(r) {
     const d = Math.round((mine - ai.score) * 10) / 10;
     $('vsVerdict').innerHTML = d > 0 ? `${pxSvg('crown', 'gold')} AI를 이겼어요! (+${fmt(d)}점)`
       : d === 0 ? `${pxSvg('equal', 'sky')} AI와 동점!` : `${pxSvg('robot', 'sky')} AI까지 ${fmt(-d)}점 남았어요`;
-    if (d > 0) Sound.win();
+    if (d > 0) { Sound.win(); triggerConfetti(); haptic([40, 50, 40, 50, 90]); }
   } else {
     playVs(key, lastDrawing.strokes, TIER_COLOR[r.tier], null);
     drawDrawing(aiCtx, 0, 0, T, key, [], '#7dd3fc', 5);
@@ -1930,6 +2067,233 @@ $('btnNext').addEventListener('click', () => {
   closeResultModal();
   finishEpisode();
 });
+
+const TITLES = [
+  { id: 'beginner', name: '새내기 화가', desc: '도안 1개 이상 첫 완성', icon: '🎨', check: (r) => Object.keys(r).length >= 1 },
+  { id: 'apprentice', name: '스케치 견습생', desc: '5개 이상 도안 기록 인정 (70점 이상)', icon: '✏️', check: (r) => Object.values(r).filter(v => v.best >= 70).length >= 5 },
+  { id: 'master', name: '도감 올클리어', desc: '10개 전체 도안 70점 이상 클리어', icon: '🏆', check: (r) => Object.keys(TEMPLATES).every(k => r[k] && r[k].best >= 70) },
+  { id: 'plotter', name: '인간 플로터', desc: '어떤 도안이든 90점(A급) 이상 달성', icon: '📐', check: (r) => Object.values(r).some(v => v.best >= 90) },
+  { id: 'god_hand', name: '신의 손', desc: '95점(S급) 초정밀 달성', icon: '⚡', check: (r) => Object.values(r).some(v => v.best >= 95) },
+  { id: 'ai_slayer', name: 'AI 사냥꾼', desc: 'AI 최고점을 넘긴 도안 보유', icon: '🤖', check: (r) => Object.entries(r).some(([k, v]) => AI_DEMOS[k] && v.best > AI_DEMOS[k].score) },
+  { id: 'tenacious', name: '끈기의 예술가', desc: '누적 30회 이상 드로잉 시도', icon: '🔥', check: (r) => Object.values(r).reduce((acc, v) => acc + (v.tries || 0), 0) >= 30 }
+];
+
+function getActiveTitle() {
+  const all = myRecords();
+  const saved = store.get('activeTitle', 'beginner');
+  const found = TITLES.find(t => t.id === saved);
+  if (found && (saved === 'beginner' || found.check(all))) return found;
+  for (const t of TITLES) {
+    if (t.check(all)) return t;
+  }
+  return TITLES[0];
+}
+
+function updateTitleBadge() {
+  const t = getActiveTitle();
+  const el = $('dexBadgeTxt');
+  if (el) el.textContent = t.name;
+}
+
+function renderDex() {
+  const all = myRecords();
+  const keys = Object.keys(TEMPLATES);
+  const clearedCount = keys.filter(k => all[k] && all[k].best >= 70).length;
+  const sCount = keys.filter(k => all[k] && all[k].best >= 95).length;
+  const curTitle = getActiveTitle();
+
+  $('dexProgress').textContent = `${clearedCount}/${keys.length}`;
+  $('dexSCount').textContent = `${sCount}개`;
+  $('dexCurTitle').textContent = curTitle.name;
+
+  const grid = $('dexGrid');
+  grid.replaceChildren(...keys.map(k => {
+    const tmpl = TEMPLATES[k];
+    const rec = all[k];
+    const card = document.createElement('div');
+    card.className = 'dex-card' + (k === targetSel.value ? ' current' : '');
+    const scoreVal = rec ? rec.best : null;
+    const tier = scoreVal != null ? (scoreVal >= 95 ? 'S' : scoreVal >= 90 ? 'A' : scoreVal >= 70 ? 'B' : 'C') : '-';
+
+    card.innerHTML = `
+      <div class="name">${tmpl.label}</div>
+      <div class="score-info">
+        <span class="tier-tag" data-tier="${tier}">${tier}</span>
+        <span class="score">${scoreVal != null ? fmt(scoreVal) + '점' : '미도전'}</span>
+      </div>
+    `;
+    card.addEventListener('click', () => {
+      Sound.tap();
+      setTarget(k);
+      closeDexModal();
+      stage.scrollIntoView({ behavior: 'smooth' });
+    });
+    return card;
+  }));
+
+  const titlesList = $('titlesList');
+  titlesList.replaceChildren(...TITLES.map(t => {
+    const unlocked = t.id === 'beginner' || t.check(all);
+    const isEquipped = curTitle.id === t.id;
+    const item = document.createElement('div');
+    item.className = 'title-item' + (!unlocked ? ' locked' : '');
+
+    item.innerHTML = `
+      <div class="title-info">
+        <div class="title-name">${t.icon} ${t.name}</div>
+        <div class="title-desc">${t.desc}</div>
+      </div>
+      <div>
+        ${unlocked
+          ? `<button type="button" class="${isEquipped ? 'active' : ''}">${isEquipped ? '장착 중' : '장착'}</button>`
+          : `<span style="color:var(--muted);font-size:11px;">🔒 미달성</span>`}
+      </div>
+    `;
+    if (unlocked) {
+      const btn = item.querySelector('button');
+      btn.addEventListener('click', () => {
+        Sound.ok();
+        store.set('activeTitle', t.id);
+        updateTitleBadge();
+        renderDex();
+        showToast(`칭호가 [${t.name}] (으)로 변경되었습니다!`, 'ok', 2000);
+      });
+    }
+    return item;
+  }));
+}
+
+function openDexModal() {
+  Sound.tap();
+  renderDex();
+  $('dexModal').classList.add('open');
+  syncModalOpen();
+}
+function closeDexModal() {
+  $('dexModal').classList.remove('open');
+  syncModalOpen();
+}
+$('btnDex').addEventListener('click', openDexModal);
+$('btnDexClose').addEventListener('click', closeDexModal);
+$('dexModal').addEventListener('click', e => {
+  if (e.target === $('dexModal')) closeDexModal();
+});
+
+let activeChallenger = null;
+async function checkChallengeUrl() {
+  const params = new URLSearchParams(location.search);
+  const chalId = params.get('challenge') || params.get('vs');
+  if (!chalId) return;
+  try {
+    const res = await fetchJSON(`/api/trajectory?id=${encodeURIComponent(chalId)}`, {}, 8000);
+    if (res && res.ok && res.strokes && res.template) {
+      activeChallenger = {
+        id: res.id,
+        nickname: res.nickname || '익명 도전자',
+        score: Number(res.score) || 0,
+        template: res.template,
+        strokes: res.strokes,
+      };
+      if (res.template in TEMPLATES) {
+        setTarget(res.template);
+      }
+      stopDemo(false);
+      currentGhostStrokes = res.strokes;
+      ghostPinned = true;
+      const pinBtn = $('btnGhostPin');
+      if (pinBtn) {
+        pinBtn.textContent = '고정 해제';
+        pinBtn.classList.add('active');
+      }
+      $('ghostUser').textContent = `⚔️ ${activeChallenger.nickname} (${fmt(activeChallenger.score)}점)`;
+      $('ghostBar').classList.add('active');
+      renderPinnedGhost();
+      showToast(`⚔️ ${activeChallenger.nickname}님의 도전장 (${fmt(activeChallenger.score)}점)! 노란 선을 넘겨보세요!`, 'ok', 6000);
+      Sound.ok();
+      haptic([40, 50, 40, 50, 80]);
+    }
+  } catch (err) {
+    console.warn('Failed to load challenge trajectory:', err);
+  }
+}
+
+function applyChallengeResult(r) {
+  let chalBanner = $('chalBanner');
+  if (activeChallenger && activeChallenger.template === r.template) {
+    if (!chalBanner) {
+      chalBanner = document.createElement('div');
+      chalBanner.id = 'chalBanner';
+      chalBanner.className = 'chal-banner';
+      const sheet = $('resultModal').querySelector('.sheet');
+      const vsEl = $('resultModal').querySelector('.vs');
+      if (sheet && vsEl) sheet.insertBefore(chalBanner, vsEl);
+    }
+    chalBanner.hidden = false;
+    const diff = Math.round((r.score - activeChallenger.score) * 10) / 10;
+    if (diff > 0) {
+      chalBanner.innerHTML = `🎉 <b>1:1 대결 승리!</b> ${activeChallenger.nickname}님(${fmt(activeChallenger.score)}점)을 <b>+${fmt(diff)}점</b> 차로 이겼습니다!`;
+      chalBanner.style.borderColor = 'var(--mark)';
+      chalBanner.style.color = '#ffc432';
+      triggerConfetti();
+      haptic([40, 50, 40, 50, 100]);
+      Sound.win();
+    } else if (diff === 0) {
+      chalBanner.innerHTML = `🤝 <b>1:1 대결 무승부!</b> ${activeChallenger.nickname}님과 <b>${fmt(activeChallenger.score)}점</b> 동점입니다!`;
+      chalBanner.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+      chalBanner.style.color = '#fbbf24';
+    } else {
+      chalBanner.innerHTML = `⚔️ <b>1:1 대결 패배</b> ${activeChallenger.nickname}님(${fmt(activeChallenger.score)}점)에게 <b>${fmt(-diff)}점</b> 차이로 졌어요. 다시 도전해보세요!`;
+      chalBanner.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+      chalBanner.style.color = '#fbbf24';
+    }
+  } else if (chalBanner) {
+    chalBanner.hidden = true;
+  }
+}
+
+$('btnChallenge').addEventListener('click', async () => {
+  Sound.tap();
+  beacon('challenge');
+  const r = lastResult;
+  if (!r || !r.id) {
+    showToast('저장된 기록이 있어야 도전장을 보낼 수 있어요!', 'warn', 3000);
+    return;
+  }
+  const host = location.origin;
+  const chalUrl = `${host}/?challenge=${encodeURIComponent(r.id)}`;
+  const tmplLabel = (TEMPLATES[r.template] && TEMPLATES[r.template].label) || r.template;
+  const nick = myName() || '도전자';
+  const title = `⚔️ ${nick}님의 1:1 드로잉 대결 도전장!`;
+  const text = `⚔️ [AI를 이겨라] ${nick}님이 ${tmplLabel} 도안에서 ${fmt(r.score)}점을 기록했어요! 이 궤적을 이길 수 있나요? 도전장 받기 👉`;
+  const full = `${text} ${chalUrl}`;
+
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isMobile && navigator.share) {
+    try {
+      await navigator.share({ title, text: full, url: chalUrl });
+      return;
+    } catch (e) {
+      if (e.name !== 'AbortError') { /* fallback */ }
+      else return;
+    }
+  }
+
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(full);
+    ok = true;
+  } catch {
+    ok = copyTextFallback(full);
+  }
+  if (ok) {
+    Sound.ok();
+    haptic([30, 40, 80]);
+    showToast('⚔️ 도전장 링크와 문구가 복사되었어요! 친구에게 대결을 신청해보세요.', 'ok', 4000);
+  } else {
+    showToast('도전장 링크: ' + chalUrl, 'warn', 5000);
+  }
+});
+
 $('btnRetry').addEventListener('click', () => {
   Sound.tap(); beacon('retry');
   closeResultModal();
@@ -2324,6 +2688,7 @@ btnForget.addEventListener('click', async () => {
 
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('nickModal').classList.contains('open')) { e.preventDefault(); $('nickCancel').click(); return; }
+  if (e.key === 'Escape' && $('dexModal').classList.contains('open')) { e.preventDefault(); closeDexModal(); return; }
   if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
   if (!(e.ctrlKey || e.metaKey)) return;
   const k = e.key.toLowerCase();
