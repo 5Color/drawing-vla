@@ -365,51 +365,87 @@ def render_tui(state: MonitorState, term_cols: int, term_rows: int) -> list[str]
 
     top_lines.append(c("─" * dash_width, "90"))
 
-    # 도안별 수집 현황 게이지
-    top_lines.append(
-        c(
-            f"  {format_cell('도안', 11)} "
-            f"{format_cell('수집', 5, right=True)} "
-            f"{format_cell('인정', 5, right=True)} "
-            f"{format_cell('인정률', 6, right=True)} "
-            f"{format_cell('품질', 8)} "
-            f"{format_cell('목표 달성도 (30개)', 20)}",
-            "1;37",
-        )
-    )
-
+    # 도안별 수집 현황 게이지 (터미널 높이에 따라 반응형 전환)
+    # term_rows < 30 이면 2열 콤팩트 모드 (6줄), term_rows >= 30 이면 1열 상세 게이지 (11줄)
+    compact_mode = term_rows < 30
     sorted_targets = sorted(state.template_labels.keys(), key=lambda t: -counts.get(t, {}).get("total", 0))
-    for t_id in sorted_targets:
-        c_info = counts.get(t_id, {"total": 0, "qualified": 0})
-        tot = c_info["total"]
-        qual = c_info["qualified"]
-        rate_val = (qual / tot) if tot > 0 else 0.0
-        rate_disp = f"{rate_val:.0%}" if tot > 0 else "-"
 
-        q_bar = make_ratio_bar(qual, tot, length=8)
+    if compact_mode:
+        top_lines.append(c(f"  {format_cell('도안별 수집 및 인정률 (목표 30개)', dash_width - 4)}", "1;37"))
+        half = (len(sorted_targets) + 1) // 2
+        left_targets = sorted_targets[:half]
+        right_targets = sorted_targets[half:]
+        col_w = (dash_width - 5) // 2
 
-        goal_ratio = min(1.0, tot / TARGET_DEMOS_GOAL)
-        goal_bar_len = 8
-        goal_filled = round(goal_ratio * goal_bar_len)
-        goal_color = "1;32" if tot >= TARGET_DEMOS_GOAL else "33" if tot >= 15 else "90"
-        goal_bar = c("━" * goal_filled, goal_color) + c("─" * (goal_bar_len - goal_filled), "90")
-        goal_pct_disp = f"{tot}/{TARGET_DEMOS_GOAL} ({tot / TARGET_DEMOS_GOAL:.0%})"
+        for i in range(max(len(left_targets), len(right_targets))):
+            t_left = left_targets[i] if i < len(left_targets) else None
+            t_right = right_targets[i] if i < len(right_targets) else None
 
-        t_name = state.template_labels.get(t_id, t_id)
+            def make_compact_col(t_id: str | None) -> str:
+                if not t_id:
+                    return " " * col_w
+                c_info = counts.get(t_id, {"total": 0, "qualified": 0})
+                tot = c_info["total"]
+                qual = c_info["qualified"]
+                rate_val = (qual / tot) if tot > 0 else 0.0
+                rate_str = f"{rate_val:.0%}" if tot > 0 else "-"
+                t_name = state.template_labels.get(t_id, t_id)
+                g_col = "1;32" if tot >= TARGET_DEMOS_GOAL else "33" if tot >= 15 else "90"
+                g_ratio = min(1.0, tot / TARGET_DEMOS_GOAL)
+                g_filled = round(g_ratio * 4)
+                g_bar = c("━" * g_filled, g_col) + c("─" * (4 - g_filled), "90")
+                name_cell = format_cell(t_name, 11)
+                tot_cell = format_cell(f"{tot}건", 5, right=True)
+                rate_cell = format_cell(rate_str, 5, right=True)
+                content = f"  {name_cell} {tot_cell} {rate_cell} [{g_bar}]"
+                return content
+
+            l_str = pad_to(make_compact_col(t_left), col_w)
+            r_str = pad_to(make_compact_col(t_right), col_w)
+            top_lines.append(f"{l_str} {c('│', '90')} {r_str}")
+    else:
         top_lines.append(
-            f"  {format_cell(t_name, 11)} "
-            f"{format_cell(str(tot), 5, right=True)} "
-            f"{format_cell(str(qual), 5, right=True)} "
-            f"{format_cell(rate_disp, 6, right=True)} "
-            f"{q_bar} "
-            f"[{goal_bar}] {c(goal_pct_disp, goal_color)}"
+            c(
+                f"  {format_cell('도안', 11)} "
+                f"{format_cell('수집', 5, right=True)} "
+                f"{format_cell('인정', 5, right=True)} "
+                f"{format_cell('인정률', 6, right=True)} "
+                f"{format_cell('품질', 8)} "
+                f"{format_cell('목표 달성도 (30개)', 20)}",
+                "1;37",
+            )
         )
+        for t_id in sorted_targets:
+            c_info = counts.get(t_id, {"total": 0, "qualified": 0})
+            tot = c_info["total"]
+            qual = c_info["qualified"]
+            rate_val = (qual / tot) if tot > 0 else 0.0
+            rate_disp = f"{rate_val:.0%}" if tot > 0 else "-"
+
+            q_bar = make_ratio_bar(qual, tot, length=8)
+
+            goal_ratio = min(1.0, tot / TARGET_DEMOS_GOAL)
+            goal_bar_len = 8
+            goal_filled = round(goal_ratio * goal_bar_len)
+            goal_color = "1;32" if tot >= TARGET_DEMOS_GOAL else "33" if tot >= 15 else "90"
+            goal_bar = c("━" * goal_filled, goal_color) + c("─" * (goal_bar_len - goal_filled), "90")
+            goal_pct_disp = f"{tot}/{TARGET_DEMOS_GOAL} ({tot / TARGET_DEMOS_GOAL:.0%})"
+
+            t_name = state.template_labels.get(t_id, t_id)
+            top_lines.append(
+                f"  {format_cell(t_name, 11)} "
+                f"{format_cell(str(tot), 5, right=True)} "
+                f"{format_cell(str(qual), 5, right=True)} "
+                f"{format_cell(rate_disp, 6, right=True)} "
+                f"{q_bar} "
+                f"[{goal_bar}] {c(goal_pct_disp, goal_color)}"
+            )
 
     top_lines.append(c("─" * dash_width, "90"))
 
     # 2. 하단 스크롤 가능 로그 뷰포트 (Scrollable Log Viewport)
-    fixed_height = len(top_lines) + 3  # top + header + status bar + border
-    viewport_height = max(5, term_rows - fixed_height)
+    fixed_height = len(top_lines) + 2  # top + header + status bar
+    viewport_height = max(1, term_rows - fixed_height)
 
     total_logs = len(rows)
     # 스크롤 오프셋 경계 보정
@@ -536,10 +572,9 @@ def main() -> int:
         print("\n".join(lines))
         return 0
 
-    # TUI 인터랙티브 모드
+    # TUI 인터랙티브 모드: Alternate Screen Buffer 진입, 커서 숨김, Auto-wrap 끔
     if USE_COLOR:
-        sys.stdout.write("\x1b[?25l")  # 커서 숨김
-        sys.stdout.write("\x1b[2J")    # 전체 화면 클리어
+        sys.stdout.write("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[2J\x1b[H")
         sys.stdout.flush()
 
     need_redraw = True
@@ -547,7 +582,7 @@ def main() -> int:
     try:
         while True:
             cur_time = time.time()
-            size = shutil.get_terminal_size((80, 30))
+            size = shutil.get_terminal_size((80, 24))
 
             # 1. 주기적 백그라운드 데이터 갱신 (5초)
             if cur_time - state.last_fetch_time >= state.interval:
@@ -567,8 +602,9 @@ def main() -> int:
                     need_redraw = True
             elif key == "DOWN":
                 total_logs = len(state.rows)
-                fixed_h = 24
-                vp_h = max(5, size.lines - fixed_h)
+                compact_m = size.lines < 30
+                fixed_h = 16 if compact_m else (len(state.template_labels) + 9)
+                vp_h = max(1, size.lines - fixed_h)
                 if state.scroll_offset < max(0, total_logs - vp_h):
                     state.scroll_offset += 1
                     need_redraw = True
@@ -577,8 +613,9 @@ def main() -> int:
                 need_redraw = True
             elif key == "PGDN":
                 total_logs = len(state.rows)
-                fixed_h = 24
-                vp_h = max(5, size.lines - fixed_h)
+                compact_m = size.lines < 30
+                fixed_h = 16 if compact_m else (len(state.template_labels) + 9)
+                vp_h = max(1, size.lines - fixed_h)
                 state.scroll_offset = min(max(0, total_logs - vp_h), state.scroll_offset + 8)
                 need_redraw = True
             elif key == "HOME":
@@ -587,17 +624,19 @@ def main() -> int:
                     need_redraw = True
             elif key == "END":
                 total_logs = len(state.rows)
-                fixed_h = 24
-                vp_h = max(5, size.lines - fixed_h)
+                compact_m = size.lines < 30
+                fixed_h = 16 if compact_m else (len(state.template_labels) + 9)
+                vp_h = max(1, size.lines - fixed_h)
                 state.scroll_offset = max(0, total_logs - vp_h)
                 need_redraw = True
 
-            # 3. 화면 렌더링 (플리커 없음)
+            # 3. 화면 렌더링 (플리커 없음, 스크롤 누적 방지)
             if need_redraw:
                 lines = render_tui(state, size.columns, size.lines)
-                out_buf = ["\x1b[H"]
-                for line in lines:
-                    out_buf.append(line + "\x1b[K\n")
+                lines = lines[: size.lines]
+                # 각 줄 끝 지우기(\x1b[K)를 붙이고 \n으로 결합하되, 맨 마지막 줄 뒤에는 \n을 찍지 않음!
+                body = "\n".join(l + "\x1b[K" for l in lines)
+                out_buf = ["\x1b[H", body, "\x1b[J"]
                 sys.stdout.write("".join(out_buf))
                 sys.stdout.flush()
                 need_redraw = False
@@ -607,7 +646,8 @@ def main() -> int:
         pass
     finally:
         if USE_COLOR:
-            sys.stdout.write("\x1b[?25h\n")  # 커서 복원
+            # Auto-wrap 복원, 커서 복원, Alternate Screen Buffer 복귀
+            sys.stdout.write("\x1b[?7h\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
         print("[monitor] 모니터링이 안전하게 종료되었습니다.")
 
