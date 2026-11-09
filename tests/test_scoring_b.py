@@ -130,6 +130,28 @@ class TestBScoring(unittest.TestCase):
         self.assertIn("도안과 무관한", result["reason"])
         self.assertLessEqual(result["score"], 65.0)
 
+    def test_variants_two_stroke_heart_and_freehand_mode(self):
+        # 1. Style variants (hand, chubby) score 100.0 and qualify
+        for var in ("hand", "chubby"):
+            var_parts = scoring.template_variant_parts("heart", var)
+            res = scoring.score_trajectory("heart", trajectory(var_parts))
+            self.assertTrue(res["qualified"], var)
+            self.assertEqual(res["score"], 100.0, var)
+
+        # 2. 2-stroke heart (left lobe + right lobe) scores 100.0 and qualifies
+        base_heart = scoring.template_parts("heart")[0]
+        mid = len(base_heart) // 2
+        two_strokes = (base_heart[: mid + 1], base_heart[mid:])
+        res_2s = scoring.score_trajectory("heart", trajectory(two_strokes))
+        self.assertTrue(res_2s["qualified"])
+        self.assertEqual(res_2s["score"], 100.0)
+
+        # 3. Freehand / Memory mode shifted & scaled heart qualifies via shape similarity
+        freehand_heart = tuple((0.5 + (x - 0.5) * 0.72 + 0.06, 0.5 + (y - 0.5) * 0.72 - 0.05) for x, y in base_heart)
+        res_free = scoring.score_trajectory("heart", trajectory((freehand_heart,)))
+        self.assertTrue(res_free["qualified"])
+        self.assertGreaterEqual(res_free["score"], 70.0)
+
 
 if __name__ == "__main__":
     unittest.main()

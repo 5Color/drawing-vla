@@ -166,6 +166,38 @@ def template_parts(key: str) -> tuple[tuple[tuple[float, float], ...], ...]:
     return tuple(tuple(sample_path(d)) for d in tpl["paths"])
 
 
+HEART_ALT_PATHS = {
+    "hand": "M247 212 C254 216 169 169 128 177 C86 186 88 245 109 282 C129 319 158 352 189 381 C220 411 269 404 302 378 C336 351 362 316 383 279 C404 243 425 201 421 159 C417 117 359 110 324 134 C290 159 240 208 247 212 Z",
+    "chubby": "M256 176 C236 122 174 106 130 136 C82 170 84 248 136 312 C178 362 226 392 256 412 C286 392 334 362 376 312 C428 248 430 170 382 136 C338 106 276 122 256 176 Z",
+}
+
+
+def transform_variant_pt(x: float, y: float, variant: str) -> tuple[float, float]:
+    """도안 스타일 변형(hand: 손그림풍 기울임, chubby: 통통한 비율) 2D 좌표 변환 (정규화 0..1 좌표)."""
+    if variant == "hand":
+        dx, dy = (x - 0.5) * 0.96, (y - 0.5) * 1.03
+        ang = -0.104719755  # -6 deg
+        c, s = math.cos(ang), math.sin(ang)
+        return (0.5 + dx * c - dy * s, 0.5 + dx * s + dy * c)
+    if variant == "chubby":
+        return (0.5 + (x - 0.5) * 1.08, 0.5 + (y - 0.5) * 0.92)
+    return (x, y)
+
+
+@lru_cache(maxsize=None)
+def _heart_alt_part(variant: str) -> tuple[tuple[tuple[float, float], ...], ...]:
+    return (tuple(sample_path(HEART_ALT_PATHS[variant])),)
+
+
+def template_variant_parts(key: str, variant: str = "base") -> tuple[tuple[tuple[float, float], ...], ...]:
+    base = template_parts(key)
+    if variant == "base":
+        return base
+    if key == "heart" and variant in HEART_ALT_PATHS:
+        return _heart_alt_part(variant)
+    return tuple(tuple(transform_variant_pt(x, y, variant) for x, y in part) for part in base)
+
+
 # ---------------------------------------------------------------------------
 # 채점
 # ---------------------------------------------------------------------------
@@ -396,12 +428,24 @@ def find_spurious_stroke(parts, runs) -> str | None:
     return None
 
 
-def score_trajectory(template: str, traj) -> dict:
-    parts = template_parts(template)
+def _align_runs(tpts: list[tuple[float, float]], drawn: list[tuple[float, float]], runs: list[list[tuple[float, float]]]):
+    """그린 궤적(runs)을 도안 바운딩 박스 중심·스케일에 맞게 정렬해 반환한다."""
+    if not drawn or not tpts:
+        return []
+    dxs, dys = [p[0] for p in drawn], [p[1] for p in drawn]
+    txs, tys = [p[0] for p in tpts], [p[1] for p in tpts]
+    dw, dh = max(dxs) - min(dxs), max(dys) - min(dys)
+    tw, th = max(txs) - min(txs), max(tys) - min(tys)
+    if dw < 0.05 or dh < 0.05 or tw < 0.05 or th < 0.05:
+        return []
+    dcx, dcy = (min(dxs) + max(dxs)) / 2, (min(dys) + max(dys)) / 2
+    tcx, tcy = (min(txs) + max(txs)) / 2, (min(tys) + max(tys)) / 2
+    scale = (tw / dw + th / dh) / 2
+    return [[(tcx + (x - dcx) * scale, tcy + (y - dcy) * scale) for x, y in r] for r in runs]
+
+
+def _score_against_parts(parts: tuple, drawn: list[tuple[float, float]], runs: list[list[tuple[float, float]]], strokes: int) -> dict:
     tpts = [p for part in parts for p in part]
-    drawn = pen_down_points(traj)
-    runs = pen_down_runs(traj)
-    strokes = count_strokes(traj)
     cov, prec, f1_10 = _agreement(tpts, drawn, TOL)
     _, _, f1_5 = _agreement(tpts, drawn, NARROW_TOL)
     score = to_score((f1_10 + f1_5) / 2)
@@ -425,21 +469,32 @@ def score_trajectory(template: str, traj) -> dict:
     # 통합 형태 유사도 (0.0 ~ 1.0)
     shape_score = 0.6 * s_f1 + 0.4 * tan_cos
 
-    # 자유 예술가 구제 조건:
-    # 1. 일반 형태 일치: (s_f1 >= 0.65 or shape_score >= 0.65) and cov >= 0.35 and prec >= 0.35
-    # 2. 고품질 소형 드로잉: shape_score >= 0.80 and cov >= 0.12 and prec >= 0.12 (크기가 작거나 아담해도 형태/코사인이 완벽하면 인정!)
+    # 정렬된 궤적 기반 부위별 채움률 및 낙서 검사 (기억/자유 그리기 모드에서 위치·크기가 다른 정상 그림 구제)
+    aligned_runs = _align_runs(tpts, drawn, runs)
+    aligned_pts = [p for r in aligned_runs for p in r]
+    if aligned_pts and len(parts) > 1:
+        g_align = _Grid(aligned_pts, TOL * 1.8)
+        aligned_part_covs = [sum(g_align.near(p) for p in part) / len(part) if part else 0.0 for part in parts]
+        min_aligned_part_cov = min(aligned_part_covs)
+    else:
+        min_aligned_part_cov = 1.0
+
+    raw_spurious = find_spurious_stroke(parts, runs)
+    aligned_spurious = find_spurious_stroke(parts, aligned_runs) if aligned_runs else raw_spurious
+
+    # 가이드 위에서 직접 그린 경우(cov >= 0.70)에는 raw_spurious를 엄격 적용(고양이 얼굴 안 낙서 차단),
+    # 기억/자유 그리기처럼 위치·크기가 이동된 경우에는 정렬 후에도 낙서 획이 남는지(aligned_spurious)로 판정
+    spurious_reason = raw_spurious if cov >= 0.70 else (aligned_spurious if aligned_spurious else None)
+
     is_freestyle_qualified = (
         (
             ((s_f1 >= 0.65 or shape_score >= 0.65) and cov >= 0.35 and prec >= 0.35)
-            or (shape_score >= 0.80 and cov >= 0.12 and prec >= 0.12)
+            or (shape_score >= 0.78 and s_cov >= 0.68 and s_prec >= 0.68 and cov >= 0.12 and prec >= 0.12)
         )
+        and (len(parts) <= 1 or max(min_part_cov, min_aligned_part_cov) >= QUALIFY_PART_COVERAGE)
         and (1 <= strokes <= max_strokes)
+        and (spurious_reason is None)
     )
-
-    # 도안과 무관한 독립 낙서/이탈 획(spurious strokes) 검사
-    spurious_reason = find_spurious_stroke(parts, runs)
-    if spurious_reason:
-        is_freestyle_qualified = False
 
     reason = None
     if not 1 <= strokes <= max_strokes:
@@ -465,7 +520,7 @@ def score_trajectory(template: str, traj) -> dict:
     if spurious_reason:
         score = min(score, 65.0)  # 무관한 낙서 획이 있으면 C급(65점 이하)으로 감점
     elif is_freestyle_qualified and score < 70.0:
-        score = max(score, round(shape_score * 85.0, 1))
+        score = max(score, round(shape_score * 88.0, 1))
 
     tier, label, label_en = tier_for(score)
     return {"score": score, "tier": tier, "tier_label": label, "tier_label_en": label_en,
@@ -474,3 +529,18 @@ def score_trajectory(template: str, traj) -> dict:
             "coverage": round(cov, 4), "part_coverage": [round(c, 4) for c in part_covs], "precision": round(prec, 4), "avg_error": err,
             "shape_f1": round(s_f1, 4), "tangent_cos": round(tan_cos, 4), "shape_score": round(shape_score, 4),
             "strokes": strokes, "qualified": reason is None, "reason": reason}
+
+
+def score_trajectory(template: str, traj) -> dict:
+    drawn = pen_down_points(traj)
+    runs = pen_down_runs(traj)
+    strokes = count_strokes(traj)
+    base_res = _score_against_parts(template_variant_parts(template, "base"), drawn, runs, strokes)
+    best = base_res
+    # 변형 도안(손그림풍 hand / 통통풍 chubby)을 따라 그린 경우, 통과 기준을 만족하거나 기본 도안보다 현저히 높은 일치도일 때 채택
+    if template in load_templates():
+        for var in ("hand", "chubby"):
+            cand = _score_against_parts(template_variant_parts(template, var), drawn, runs, strokes)
+            if cand["qualified"] and (cand["score"], cand["f1_10"]) > (best["score"] + 1.0, best["f1_10"] + 0.02):
+                best = cand
+    return best
