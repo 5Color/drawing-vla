@@ -541,6 +541,10 @@ def score_trajectory(template: str, traj) -> dict:
     if template in load_templates():
         for var in ("hand", "chubby"):
             cand = _score_against_parts(template_variant_parts(template, var), drawn, runs, strokes)
-            if cand["qualified"] and (cand["score"], cand["f1_10"]) > (best["score"] + 1.0, best["f1_10"] + 0.02):
+            if not best["qualified"] and cand["qualified"]:
+                best = cand
+            elif cand["qualified"] and cand["f1_10"] > best["f1_10"] + 0.02 and cand["score"] > best["score"]:
+                best = cand
+            elif (not best["qualified"] or best["f1_10"] < 0.70) and cand["shape_score"] > best["shape_score"] + 0.03 and cand["score"] > best["score"]:
                 best = cand
     return best
