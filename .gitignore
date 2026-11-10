@@ -26,3 +26,5 @@ venv/
 htmlcov/
 .DS_Store
 Thumbs.db
+scratch/
+

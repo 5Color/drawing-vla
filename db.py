@@ -299,6 +299,14 @@ class SupabaseDB:
     def leaderboard_by_input(self, template: str, input_type: str, limit: int = 5) -> list[dict]:
         return self._leaderboard(template, limit, input_type)
 
+    def trajectories(self, ids: list[str]) -> dict[str, list]:
+        """기록 id → 서버가 만든 궤적 (복제 제출 검사용, 요청 한 번)."""
+        if not ids:
+            return {}
+        res, _ = self._req("GET", "drawing_demos", {"select": "id,trajectory:trajectory_data->trajectory",
+                                                    "id": f"in.({','.join(ids)})"})
+        return {r["id"]: r.get("trajectory") or [] for r in res or []}
+
     def counts(self) -> dict[str, dict]:
         res, _ = self._req("GET", "template_counts", {"select": "template_name,total,qualified"})
         return {r["template_name"]: {"total": r["total"], "qualified": r["qualified"]} for r in res or []}
@@ -481,6 +489,13 @@ class SqliteDB:
                           "order by score desc, avg_error is null, avg_error asc, created_at asc, id asc",
                           (template, input_type))
         return _best_per_nickname(rows, limit)
+
+    def trajectories(self, ids: list[str]) -> dict[str, list]:
+        if not ids:
+            return {}
+        rows = self._rows(f"select id, json_extract(trajectory_data, '$.trajectory') t from drawing_demos "
+                          f"where id in ({', '.join('?' * len(ids))})", tuple(ids))
+        return {r["id"]: json.loads(r["t"]) if r["t"] else [] for r in rows}
 
     def counts(self) -> dict[str, dict]:
         return {r["template_name"]: {"total": r["total"], "qualified": r["qualified"]} for r in self._rows(

@@ -241,6 +241,9 @@ def main() -> int:
             mark = "*" if i == 0 else " "
             print(f"  {mark} http://{ip}:{port}".ljust(30) + f"  {desc}")
         print("   (* = 기본 경로 인터페이스)")
+        print(" * 펜 고속 샘플링(getCoalescedEvents)은 보안 컨텍스트(https·localhost)에서만 켜질 수 있습니다.")
+        print(f"   USB로 연결한 안드로이드 태블릿은 'adb reverse tcp:{port} tcp:{port}' 후 http://localhost:{port} 로 접속하세요.")
+        print("   (저장된 시연의 meta.device.coalesced_events로 실제 지원 여부를 확인할 수 있습니다)")
     elif args.host in ("0.0.0.0", ""):
         print(" Tablet (same Wi-Fi) : LAN IP를 찾지 못했습니다. ipconfig로 IPv4 주소를 확인하세요.")
     else:

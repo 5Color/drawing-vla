@@ -1,0 +1,29 @@
+{
+  "baseline": {
+    "coverage": 1.0,
+    "precision": 1.0,
+    "f1": 1.0
+  },
+  "perturb_10px": {
+    "coverage": 0.9487179487179487,
+    "precision": 0.9410977242302544,
+    "f1": 0.9448924731182796
+  },
+  "perturb_20px": {
+    "coverage": 0.865047233468286,
+    "precision": 0.875,
+    "f1": 0.8699951526902568
+  },
+  "open_loop_20px": {
+    "coverage": 0.43724696356275305,
+    "precision": 0.4041184041184041,
+    "f1": 0.4200304693015594
+  },
+  "recovery_dynamics": {
+    "initial_jump_px": 15.254914291947031,
+    "dist_step_10": 14.050082923975756,
+    "dist_step_20": 10.751387976108553,
+    "dist_step_30": 7.497676671569969,
+    "steps_to_recover_2px": 42
+  }
+}

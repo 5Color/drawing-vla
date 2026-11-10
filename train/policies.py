@@ -52,29 +52,39 @@ class VisuomotorPolicy(nn.Module):
     head_type = "mlp"
 
     def __init__(self, chunk_size: int = CHUNK_SIZE, channels=(32, 64, 128, 256), feat_dim: int = 256,
-                 obs_size: int = OBS_SIZE, state_dim: int = 0, pen_up_weight: float = 1.0, state_embed: int = 0):
+                 obs_size: int = OBS_SIZE, state_dim: int = 0, pen_up_weight: float = 1.0, state_embed: int = 0,
+                 num_tasks: int = 0):
         super().__init__()
         self.chunk_size, self.state_dim, self.pen_up_weight = chunk_size, state_dim, pen_up_weight
+        self.num_tasks = num_tasks
         self.encoder = build_encoder(channels, feat_dim, obs_size)
         self.state_net = build_state_net(state_dim, state_embed)
+        self.task_emb = nn.Embedding(num_tasks, 32) if num_tasks > 0 else None
         s_dim = state_embed if self.state_net is not None else state_dim
-        self.head = nn.Sequential(nn.Linear(feat_dim + s_dim, 128), nn.ReLU(inplace=True), nn.Linear(128, chunk_size * 3))
+        t_dim = 32 if self.task_emb is not None else 0
+        self.head = nn.Sequential(nn.Linear(feat_dim + s_dim + t_dim, 128), nn.ReLU(inplace=True), nn.Linear(128, chunk_size * 3))
 
-    def forward(self, obs, state=None):
+    def forward(self, obs, state=None, task_id=None):
         f = self.encoder(obs)
         if self.state_dim:
             f = torch.cat([f, self.state_net(state) if self.state_net is not None else state], 1)
+        if self.task_emb is not None and task_id is not None:
+            if not torch.is_tensor(task_id):
+                task_id = torch.tensor(task_id, dtype=torch.long, device=obs.device)
+            if task_id.dim() == 0:
+                task_id = task_id.expand(obs.shape[0])
+            f = torch.cat([f, self.task_emb(task_id)], 1)
         out = self.head(f).view(-1, self.chunk_size, 3)
         return torch.sigmoid(out[..., :2]), out[..., 2]  # xy ∈ [0,1], pen logits
 
-    def loss(self, obs, state, action):
-        xy, logit = self(obs, state)
+    def loss(self, obs, state, action, task_id=None):
+        xy, logit = self(obs, state, task_id=task_id)
         loss, l_xy, l_pen = policy_loss(xy, logit, action, self.pen_up_weight)
         return loss, {"xy": l_xy, "pen": l_pen}
 
     @torch.no_grad()
-    def predict(self, obs, state=None):
-        xy, logit = self(obs, state)
+    def predict(self, obs, state=None, task_id=None):
+        xy, logit = self(obs, state, task_id=task_id)
         return xy, torch.sigmoid(logit)
 
 
@@ -213,14 +223,16 @@ class TransformerPolicy(nn.Module):
 
     def __init__(self, chunk_size: int = CHUNK_SIZE, channels=(32, 64, 128, 256), d_model: int = 256,
                  obs_size: int = OBS_SIZE, state_dim: int = 3, nhead: int = 4, num_layers: int = 3,
-                 dim_feedforward: int = 512, pen_up_weight: float = 10.0, **kwargs):
+                 dim_feedforward: int = 512, pen_up_weight: float = 10.0, num_tasks: int = 0, **kwargs):
         super().__init__()
         self.chunk_size = chunk_size
         self.state_dim = state_dim
         self.pen_up_weight = pen_up_weight
+        self.num_tasks = num_tasks
         self.encoder = ConvSpatialEncoder(channels, d_model)
         
         self.state_proj = nn.Linear(state_dim, d_model) if state_dim else None
+        self.task_emb = nn.Embedding(num_tasks, d_model) if num_tasks > 0 else None
         self.action_queries = nn.Parameter(torch.randn(1, chunk_size, d_model) * 0.02)
         
         decoder_layer = nn.TransformerDecoderLayer(
@@ -230,15 +242,24 @@ class TransformerPolicy(nn.Module):
         self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
         self.out_proj = nn.Linear(d_model, 3)
 
-    def forward(self, obs, state=None):
+    def forward(self, obs, state=None, task_id=None):
         B = obs.shape[0]
         vis_tokens = self.encoder(obs)  # (B, 64, d_model)
+        tokens = [vis_tokens]
         
         if self.state_proj is not None and state is not None:
             state_token = self.state_proj(state).unsqueeze(1)  # (B, 1, d_model)
-            memory = torch.cat([vis_tokens, state_token], dim=1)
-        else:
-            memory = vis_tokens
+            tokens.append(state_token)
+
+        if self.task_emb is not None and task_id is not None:
+            if not torch.is_tensor(task_id):
+                task_id = torch.tensor(task_id, dtype=torch.long, device=obs.device)
+            if task_id.dim() == 0:
+                task_id = task_id.expand(B)
+            task_token = self.task_emb(task_id).unsqueeze(1)  # (B, 1, d_model)
+            tokens.append(task_token)
+
+        memory = torch.cat(tokens, dim=1)
 
         queries = self.action_queries.expand(B, -1, -1)  # (B, 16, d_model)
         h = self.decoder(tgt=queries, memory=memory)      # (B, 16, d_model)
@@ -246,21 +267,22 @@ class TransformerPolicy(nn.Module):
         
         return torch.sigmoid(out[..., :2]), out[..., 2]  # xy ∈ [0,1], pen logits
 
-    def loss(self, obs, state, action):
-        xy, logit = self(obs, state)
+    def loss(self, obs, state, action, task_id=None):
+        xy, logit = self(obs, state, task_id=task_id)
         loss, l_xy, l_pen = policy_loss(xy, logit, action, self.pen_up_weight)
         return loss, {"xy": l_xy, "pen": l_pen}
 
     @torch.no_grad()
-    def predict(self, obs, state=None):
-        xy, logit = self(obs, state)
+    def predict(self, obs, state=None, task_id=None):
+        xy, logit = self(obs, state, task_id=task_id)
         return xy, torch.sigmoid(logit)
 
 
 # ---------------------------------------------------------------------------
 def build_policy(cfg: dict) -> nn.Module:
     common = {"chunk_size": cfg["chunk_size"], "channels": tuple(cfg["channels"]), "obs_size": cfg["obs_size"],
-              "state_dim": cfg.get("state_dim", 0), "state_embed": cfg.get("state_embed", 0)}
+              "state_dim": cfg.get("state_dim", 0), "state_embed": cfg.get("state_embed", 0),
+              "num_tasks": cfg.get("num_tasks", 0)}
     if cfg.get("head", "mlp") == "diffusion":
         return DiffusionPolicy(**common, **cfg.get("diffusion", {}))
     if cfg.get("head") == "transformer":

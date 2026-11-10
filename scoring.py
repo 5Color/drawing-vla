@@ -256,6 +256,87 @@ class _SegGrid:
         return best
 
 
+def _ring(cx: int, cy: int, r: int, bounds: tuple[int, int, int, int]):
+    """(cx, cy)에서 체비셰프 거리가 정확히 r인 칸들 (색인 범위 밖은 건너뜀)."""
+    bx0, by0, bx1, by1 = bounds
+    if r == 0:
+        yield cx, cy
+        return
+    x0, x1 = max(cx - r, bx0), min(cx + r, bx1)
+    for y in (cy - r, cy + r):
+        if by0 <= y <= by1:
+            for x in range(x0, x1 + 1):
+                yield x, y
+    y0, y1 = max(cy - r + 1, by0), min(cy + r - 1, by1)
+    for x in (cx - r, cx + r):
+        if bx0 <= x <= bx1:
+            for y in range(y0, y1 + 1):
+                yield x, y
+
+
+class _NearIndex:
+    """전수 비교(`if d < best`로 끝까지 훑기)와 똑같은 답 — 가장 작은 거리, 같으면 앞 번호 — 을 내는 격자 색인.
+    물체(선분·점)를 경계 상자가 걸치는 모든 칸에 넣고, 질의 점의 칸에서 고리를 한 겹씩 넓혀 가며 찾는다.
+    r번째 고리까지 보면 남은 물체는 질의 점에서 r·CELL보다 멀다 → 지금 최솟값이 그보다 확실히 작으면 멈춘다.
+    도안 근처 점은 주변 몇 칸만 본다. (도안 한가운데처럼 모든 선이 비슷하게 먼 점은 결국 전부 보게 되어 예전과 같은 비용)
+    채점 공식은 바꾸지 않는다: 같은 거리 함수로 같은 후보 중 최솟값을 고를 뿐이다."""
+    CELL = 0.01
+    EPS = 1e-9   # 칸 경계의 부동소수 오차 여유 (멈출지 판단할 때만 쓴다)
+
+    def __init__(self, boxes):
+        c, cells = self.CELL, {}
+        for i, (x0, y0, x1, y1) in enumerate(boxes):
+            for cx in range(math.floor(x0 / c), math.floor(x1 / c) + 1):
+                for cy in range(math.floor(y0 / c), math.floor(y1 / c) + 1):
+                    cells.setdefault((cx, cy), []).append(i)
+        self.cells = cells
+        self.bounds = ((min(k[0] for k in cells), min(k[1] for k in cells), max(k[0] for k in cells),
+                        max(k[1] for k in cells)) if cells else None)
+
+    def nearest(self, p, dist) -> tuple[float, int]:
+        """(최소 거리, 물체 번호). dist(i) = 물체 i까지의 거리 (전수 비교에서 쓰던 식 그대로)."""
+        best, bi = math.inf, -1
+        if not self.cells:
+            return best, bi
+        c, cells, bounds = self.CELL, self.cells, self.bounds
+        cx, cy = math.floor(p[0] / c), math.floor(p[1] / c)
+        bx0, by0, bx1, by1 = bounds
+        r = max(bx0 - cx, cx - bx1, by0 - cy, cy - by1, 0)      # 이보다 안쪽 고리에는 물체가 없음
+        r_all = max(cx - bx0, bx1 - cx, cy - by0, by1 - cy, r)   # 이 고리까지 보면 모든 칸을 본 것
+        while True:
+            for key in _ring(cx, cy, r, bounds):
+                for i in cells.get(key, ()):
+                    d = dist(i)
+                    if d < best or (d == best and i < bi):
+                        best, bi = d, i
+            if r >= r_all or best < r * c - self.EPS:
+                return best, bi
+            r += 1
+
+
+def _parts_key(parts) -> tuple:
+    return tuple(tuple(tuple(p) for p in part) for part in parts)
+
+
+@lru_cache(maxsize=32)
+def _tpl_tangent_index(parts: tuple):
+    """도안 선분(길이 1e-4 초과)과 단위 접선 + 선분 색인 — tangent_cosine_similarity 전용."""
+    segs = []
+    for part in parts:
+        for a, b in zip(part, part[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            L = math.hypot(dx, dy)
+            if L > 1e-4:
+                segs.append((a, b, dx / L, dy / L))
+    boxes = [(min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1])) for a, b, _, _ in segs]
+    return segs, _NearIndex(boxes)
+
+
+@lru_cache(maxsize=32)
+def _tpl_point_index(tpts: tuple) -> _NearIndex:
+    return _NearIndex([(x, y, x, y) for x, y in tpts])
+
+
 def pen_down_runs(traj) -> list[list[tuple[float, float]]]:
     """연속한 펜 다운 점 묶음 (획마다 하나)."""
     runs, cur = [], []
@@ -345,14 +426,8 @@ def tangent_cosine_similarity(parts: tuple, runs: list[list[tuple[float, float]]
     사용자가 도안보다 작거나 위치가 달라도, 곡선이 흘러가는 각도/회전이 도안과 닮았는가를 평가한다."""
     if not runs:
         return 0.0
-    # 도안 선분 단위 벡터 풀
-    tpl_segs: list[tuple[tuple[float, float], tuple[float, float], float, float]] = []
-    for part in parts:
-        for a, b in zip(part, part[1:]):
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            L = math.hypot(dx, dy)
-            if L > 1e-4:
-                tpl_segs.append((a, b, dx / L, dy / L))
+    # 도안 선분 단위 벡터 풀 (+ 가장 가까운 선분을 빠르게 찾는 색인. 답은 전수 비교와 같다)
+    tpl_segs, index = _tpl_tangent_index(_parts_key(parts))
     if not tpl_segs:
         return 0.0
 
@@ -366,16 +441,12 @@ def tangent_cosine_similarity(parts: tuple, runs: list[list[tuple[float, float]]
             if v_len < 1e-3:
                 continue
             vx, vy = vx / v_len, vy / v_len
-            # 가장 가까운 도안 선분의 접선 찾기
-            best_dist, best_cos = float("inf"), 0.0
+            # 가장 가까운 도안 선분(거리가 같으면 앞 선분)의 접선 찾기
             mid_p = ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
-            for a, b, ux, uy in tpl_segs:
-                d = _seg_dist(mid_p, a, b)
-                if d < best_dist:
-                    best_dist = d
-                    # 양방향 그리기(시계/반시계) 모두 인정: abs(dot)
-                    best_cos = abs(ux * vx + uy * vy)
-            cos_sims.append(best_cos)
+            _, i = index.nearest(mid_p, lambda i: _seg_dist(mid_p, tpl_segs[i][0], tpl_segs[i][1]))
+            _, _, ux, uy = tpl_segs[i]
+            # 양방향 그리기(시계/반시계) 모두 인정: abs(dot)
+            cos_sims.append(abs(ux * vx + uy * vy))
 
     return sum(cos_sims) / len(cos_sims) if cos_sims else 0.0
 
@@ -409,10 +480,12 @@ def find_spurious_stroke(parts, runs) -> str | None:
     tpts = [p for part in parts for p in part]
     if not tpts or not runs:
         return None
+    index = _tpl_point_index(tuple(tuple(p) for p in tpts))   # 가장 가까운 도안 점 (답은 전수 비교와 같다)
     for idx, run in enumerate(runs):
         if not run:
             continue
-        dists = [min(math.hypot(rx - tx, ry - ty) for tx, ty in tpts) * 512 for rx, ry in run]
+        dists = [index.nearest((rx, ry), lambda i: math.hypot(rx - tpts[i][0], ry - tpts[i][1]))[0] * 512
+                 for rx, ry in run]
         # 1. 3점 이하 짧은 고립 점: 도안에서 30px 이상 떨어짐
         if len(run) <= 3:
             min_d = min(dists)

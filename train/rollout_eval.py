@@ -87,12 +87,16 @@ class IncrementalCanvas:
 INFER_MS: list[float] = []   # 청크 추론 시간 (관측 텐서 준비 + 모델 + CPU로 복사, ms)
 
 
-def predict_chunk(model, canvas, tgt, state, dev, noise_scale: float = 1.0) -> np.ndarray:
+def predict_chunk(model, canvas, tgt, state, dev, noise_scale: float = 1.0, task_id: int | None = None) -> np.ndarray:
     """→ [16, 3] (x, y, pen 확률). 디퓨전은 호출할 때마다 새로 샘플링."""
     t0 = time.perf_counter()
     obs = torch.from_numpy(np.stack([canvas.astype(np.float32) / 255, tgt]))[None].to(dev)
     st = torch.from_numpy(np.asarray(state, np.float32))[None].to(dev)
-    kw = {"noise_scale": noise_scale} if getattr(model, "head_type", "mlp") == "diffusion" else {}
+    kw = {}
+    if getattr(model, "head_type", "mlp") == "diffusion":
+        kw["noise_scale"] = noise_scale
+    if task_id is not None and getattr(model, "task_emb", None) is not None:
+        kw["task_id"] = torch.tensor([task_id], dtype=torch.long, device=dev)
     xy, pen_prob = model.predict(obs, st, **kw)
     out = torch.cat([xy[0], pen_prob[0][:, None]], 1).cpu().numpy()   # .cpu()가 장치 동기화 → 실제 소요 시간
     INFER_MS.append((time.perf_counter() - t0) * 1000)
@@ -129,7 +133,7 @@ def smoothness(traj: np.ndarray, step: float = 0.005, display: bool = False) -> 
 @torch.no_grad()
 def rollout(model, target: np.ndarray, dev, max_iters: int = 100, exec_steps: int = 8, patience: int = 6,
             skip_pauses: bool = False, te_m: float | None = None, noise_scale: float = 1.0,
-            query_freq: int = 1, te_weight: str = "exp"):
+            query_freq: int = 1, te_weight: str = "exp", task_id: int | None = None):
     """반환: (실행 궤적 [N,3], 기록, 종료 사유).
 
     te_m=None : receding horizon — 청크를 예측해 앞 exec_steps개 실행 후 다시 예측 (반복 1회 = exec_steps스텝)
@@ -149,7 +153,7 @@ def rollout(model, target: np.ndarray, dev, max_iters: int = 100, exec_steps: in
     tgt = target.astype(np.float32) / 255
     for it in range(max_iters):
         if te_m is None:
-            chunk = predict_chunk(model, canvas, tgt, state, dev, noise_scale)
+            chunk = predict_chunk(model, canvas, tgt, state, dev, noise_scale, task_id=task_id)
             chunk[:, 2] = (chunk[:, 2] > 0.5).astype(np.float32)
             run = chunk
             if skip_pauses:  # 진단용: 펜 다운인 채 거의 안 움직이는 스텝(사람의 머뭇거림)을 건너뜀
@@ -168,7 +172,7 @@ def rollout(model, target: np.ndarray, dev, max_iters: int = 100, exec_steps: in
             for j in range(per_iter):
                 t = len(executed)
                 if j == 0:   # query_freq스텝마다 한 번만 정책 호출
-                    chunk = predict_chunk(model, canvas, tgt, state, dev, noise_scale)
+                    chunk = predict_chunk(model, canvas, tgt, state, dev, noise_scale, task_id=task_id)
                     buffer = [(ti, c) for ti, c in buffer if t - ti < H] + [(t, chunk)]
                 buffer = [(ti, c) for ti, c in buffer if t - ti < H]
                 cands = np.stack([c[t - ti] for ti, c in buffer])  # 오래된 예측부터
@@ -190,7 +194,7 @@ def rollout(model, target: np.ndarray, dev, max_iters: int = 100, exec_steps: in
         # 종료 1: 16스텝 전부 펜-업 + 거의 정지 = 시연 끝(마지막 점 복제 패딩)을 재현 → 스스로 끝냄
         idle = chunk[:, 2].max() < 0.5 and np.abs(chunk[:, :2] - chunk[0, :2]).max() < 0.01
         still = still + 1 if idle and it > 2 else 0
-        if still >= 2:
+        if still >= 6:
             reason = "스스로 종료 (펜 업 정지)"
             break
         # 종료 2: 새 잉크가 patience회 연속 없음 = 같은 자리 맴돌기
@@ -246,6 +250,7 @@ def main() -> int:
         epilog="권장 프리셋 (v4 MLP·사과 기준, F1 0.973 · 화면 물결 1.59° · 추론 2배): "
                "--exec-steps 12 --ensemble --brush  (= --query-freq 6 --temporal-ensemble 0.01)")
     ap.add_argument("--ckpt", default=str(OUT_DIR / "apple_vla_policy.pth"))
+    ap.add_argument("--target", default=None, help="롤아웃 평가할 목표 도안 (지정하지 않으면 ckpt의 target)")
     ap.add_argument("--max-iters", type=int, default=100)
     ap.add_argument("--exec-steps", type=int, default=8)
     ap.add_argument("--patience", type=int, default=6, help="새 잉크 없는 반복이 이만큼 이어지면 중단")
@@ -261,6 +266,8 @@ def main() -> int:
     ap.add_argument("--query-freq", type=int, default=6, help="[앙상블] 정책 호출 주기(스텝, 기본 6). 12/주기 = 추론 횟수 배율")
     ap.add_argument("--te-weight", choices=["exp", "linear"], default="exp", help="[앙상블] 가중치 방식")
     ap.add_argument("--noise-scale", type=float, default=1.0, help="[diffusion] 초기 잡음 배율 (저온 샘플링, 예: 0.5)")
+    ap.add_argument("--blank", action="store_true",
+                    help="백지 캔버스 창작 모드 (도안 채널을 0으로 비우고 오직 프롬프트/task_id로 그리기)")
     ap.add_argument("--brush", action="store_true", help="붓 렌더(스플라인·끝선 빼기) 결과 PNG·GIF도 저장")
     ap.add_argument("--brush-fps", type=int, default=30, help="붓 GIF 프레임률 (화면 렌더 주기)")
     args = ap.parse_args()
@@ -281,17 +288,32 @@ def main() -> int:
     model.load_state_dict(ckpt["model"])
     head = cfg.get("head", "mlp")
     n_seeds = args.seeds or (5 if head == "diffusion" else 1)
-    target_name = cfg["target"]
-    name = (f"{target_name}{tag_suffix(cfg.get('tag', ''))}{'_skip' if args.skip_pauses else ''}"
+    target_name = args.target or cfg["target"]
+    if "," in target_name:
+        target_name = target_name.split(",")[0].strip()
+    target_tag = f"{target_name}_for_{cfg['target'].replace(',', '_')}" if cfg["target"] != target_name else target_name
+    blank_sfx = "_blank" if args.blank else ""
+    name = (f"{target_tag}{tag_suffix(cfg.get('tag', ''))}{blank_sfx}{'_skip' if args.skip_pauses else ''}"
             f"{f'_te{args.temporal_ensemble:g}q{qf}' + ('lin' if args.te_weight == 'linear' else '') if args.temporal_ensemble is not None else ''}"
             f"{f'_ns{args.noise_scale:g}' if args.noise_scale != 1.0 else ''}{args.out_suffix}")
     print(f"[ckpt] {Path(args.ckpt).name}: head {head}, epoch {ckpt['epoch']}, val xy {ckpt['val']['xy'] * 512:.1f}px,"
-          f" state_dim {cfg.get('state_dim', 0)}", flush=True)
+          f" state_dim {cfg.get('state_dim', 0)}, target {target_name}{' (BLANK CANVAS MODE)' if args.blank else ''}", flush=True)
+
+    task_map = cfg.get("task_map", {})
+    task_id = task_map.get(target_name, None)
+    if task_id is not None:
+        print(f"[task] target='{target_name}' -> task_id={task_id} (known tasks: {list(task_map.keys())})", flush=True)
 
     # 목표 도안(브라우저가 렌더한 128px)과 비교용 사람 시연(검증셋, 학습에 안 쓰인 에피소드)
-    ref_path = ROOT / "data" / "raw" / ckpt["val_files"][0]
+    val_candidates = [f for f in ckpt.get("val_files", []) if f"demo_{target_name}_" in f]
+    if val_candidates:
+        ref_path = ROOT / "data" / "raw" / val_candidates[0]
+    else:
+        raw_candidates = sorted((ROOT / "data" / "raw").glob(f"demo_{target_name}_*.json"))
+        ref_path = raw_candidates[0] if raw_candidates else ROOT / "data" / "raw" / ckpt["val_files"][0]
     ref = json.loads(ref_path.read_text(encoding="utf-8"))
     target = decode_png_gray(ref["target_128_png"])
+    rollout_target = np.zeros_like(target) if args.blank else target
     human = render_canvas(np.asarray(ref["trajectory"], np.float32))
     s_human = match_scores(human, target)
 
@@ -299,8 +321,8 @@ def main() -> int:
     for seed in range(n_seeds):
         torch.manual_seed(seed)
         t0 = time.perf_counter()
-        ex, hist, why = rollout(model, target, dev, max_iters, args.exec_steps, patience, args.skip_pauses,
-                                args.temporal_ensemble, args.noise_scale, qf, args.te_weight)
+        ex, hist, why = rollout(model, rollout_target, dev, max_iters, args.exec_steps, patience, args.skip_pauses,
+                                args.temporal_ensemble, args.noise_scale, qf, args.te_weight, task_id=task_id)
         sc = match_scores(hist[-1]["canvas"], target)
         sm = smoothness(ex)
         sm.update({f"disp_{k}": v for k, v in smoothness(ex, display=True).items()})
@@ -333,7 +355,7 @@ def main() -> int:
     done = reason.startswith("스스로")
 
     # GIF: 반복마다 한 프레임 (흰색 = 캔버스, 큰 점 = 실행한 8스텝, 작은 점 = 버린 8스텝, 빨강 = 펜 다운, 초록 = 펜 업)
-    frames = [frame(target, h, i, qf) for i, h in enumerate(history)]
+    frames = [frame(rollout_target, h, i, qf) for i, h in enumerate(history)]
     frames += [frames[-1]] * 12
     gif = OUT_DIR / f"rollout_{name}.gif"
     frames[0].save(gif, save_all=True, append_images=frames[1:], duration=90, loop=0, optimize=True)
@@ -341,11 +363,14 @@ def main() -> int:
     overlay = np.zeros((OBS_SIZE * SCALE, OBS_SIZE * SCALE, 3), np.uint8)
     overlay = np.maximum(overlay, np.asarray(to_rgb(target, (255, 70, 70))))
     overlay = np.maximum(overlay, np.asarray(to_rgb(final, (90, 220, 255))))
+    p1_title = "ground truth ref" if args.blank else "target"
+    p1_sub = f"prompt: {target_name}" if args.blank else "obs[1]"
+    p2_title = "policy rollout (blank-canvas)" if args.blank else "policy rollout (closed-loop)"
     panels = [
-        panel(to_rgb(target), "target", "obs[1]"),
-        panel(to_rgb(final), "policy rollout (closed-loop)",
+        panel(to_rgb(target), p1_title, p1_sub),
+        panel(to_rgb(final), p2_title,
               f"cov {s_roll['coverage']:.0%}  prec {s_roll['precision']:.0%}  F1 {s_roll['f1']:.2f}  · {n_strokes} strokes"),
-        panel(Image.fromarray(overlay), "overlay", "red = target, cyan = rollout"),
+        panel(Image.fromarray(overlay), "overlay", "red = GT, cyan = rollout" if args.blank else "red = target, cyan = rollout"),
         panel(to_rgb(human), "human demo (val, unseen)",
               f"cov {s_human['coverage']:.0%}  prec {s_human['precision']:.0%}  F1 {s_human['f1']:.2f}"),
     ]

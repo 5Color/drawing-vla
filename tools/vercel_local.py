@@ -63,7 +63,7 @@ def main() -> int:
             if path == "/api/cron":   # Vercel Cron이 부르는 깨우기 (정규 주소 리다이렉트 없음)
                 return api_core.serve_cron(self)
             routes = {"/api/stats": "stats", "/api/ticket": "ticket", "/api/leaderboard": "leaderboard",
-                      "/api/og": "og", "/s": "share", "/api/share": "share"}
+                      "/api/og": "og", "/s": "share", "/api/share": "share", "/api/trajectory": "trajectory"}
             name = routes.get(path)
             if name:
                 return api_core.serve_get(self, name)

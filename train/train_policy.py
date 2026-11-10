@@ -89,12 +89,14 @@ def augment(obs: torch.Tensor, state: torch.Tensor, scale: float = 0.05, shift_p
 # ---------------------------------------------------------------------------
 # 데이터: 진행 중인 캔버스를 스텝마다 미리 렌더해 uint8로 캐시 → 학습 시 디바이스 메모리에 상주
 # ---------------------------------------------------------------------------
-def build_arrays(ds: DrawingVLADataset, cache_path: Path) -> dict[str, np.ndarray]:
+def build_arrays(ds: DrawingVLADataset, cache_path: Path, task_map: dict[str, int] | None = None) -> dict[str, np.ndarray]:
+    task_map = task_map or {}
     # Cache the processed inputs, not filenames: edits and stroke normalization can keep T unchanged.
     digest = hashlib.sha256(json.dumps({
-        "version": 2, "chunk_size": ds.chunk_size, "obs_size": ds.obs_size,
+        "version": 3, "chunk_size": ds.chunk_size, "obs_size": ds.obs_size,
         "stroke_width_px": ds.stroke_width_px, "supersample": ds.supersample,
         "lengths": [len(ep) for ep in ds.episodes],
+        "task_map": task_map,
     }, sort_keys=True).encode())
     for ep in ds.episodes:
         digest.update(ep.traj.tobytes())
@@ -102,7 +104,7 @@ def build_arrays(ds: DrawingVLADataset, cache_path: Path) -> dict[str, np.ndarra
     key = digest.hexdigest()
     if cache_path.exists():
         with np.load(cache_path) as z:
-            if str(z["key"]) == key:
+            if str(z["key"]) == key and "task_ids" in z.files:
                 print(f"[data] 캐시 사용: {cache_path.name}", flush=True)
                 return add_state({k: z[k] for k in z.files if k != "key"})
     N = len(ds)
@@ -118,10 +120,20 @@ def build_arrays(ds: DrawingVLADataset, cache_path: Path) -> dict[str, np.ndarra
             ep_id[i], tt[i] = e, t
             i += 1
     targets = np.stack([ep.target for ep in ds.episodes])
+
+    # 에피소드별 task_id 부여
+    ep_task_ids = np.zeros(len(ds.episodes), dtype=np.int64)
+    for e, ep in enumerate(ds.episodes):
+        fname = ep.path.name
+        for t_name, t_id in task_map.items():
+            if f"demo_{t_name}_" in fname or fname == f"demo_{t_name}.json":
+                ep_task_ids[e] = t_id
+                break
+
     print(f"[data] 진행 중 캔버스 {N}장 렌더 {time.perf_counter() - t0:.1f}s → {cache_path.name}", flush=True)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(cache_path, key=key, canv=canv, act=act, ep_id=ep_id, t=tt, targets=targets)
-    return add_state({"canv": canv, "act": act, "ep_id": ep_id, "t": tt, "targets": targets})
+    np.savez(cache_path, key=key, canv=canv, act=act, ep_id=ep_id, t=tt, targets=targets, task_ids=ep_task_ids)
+    return add_state({"canv": canv, "act": act, "ep_id": ep_id, "t": tt, "targets": targets, "task_ids": ep_task_ids})
 
 
 def add_state(arr: dict) -> dict:
@@ -132,19 +144,27 @@ def add_state(arr: dict) -> dict:
 
 
 def to_device(arr: dict, dev: torch.device) -> dict[str, torch.Tensor]:
-    return {
+    d = {
         "canv": torch.from_numpy(arr["canv"]).to(dev),          # uint8 상주 (~400MB)
         "act": torch.from_numpy(arr["act"]).to(dev),
         "state": torch.from_numpy(arr["state"]).to(dev),
         "targets": torch.from_numpy(arr["targets"]).to(dev),
         "ep_id": torch.from_numpy(arr["ep_id"].astype(np.int64)).to(dev),
     }
+    if "task_ids" in arr:
+        d["task_ids"] = torch.from_numpy(arr["task_ids"]).to(dev)
+    return d
 
 
-def make_batch(d: dict[str, torch.Tensor], idx: torch.Tensor):
+def make_batch(d: dict[str, torch.Tensor], idx: torch.Tensor, goal_drop: float = 0.0):
     canv = d["canv"][idx].float().div_(255)
     tgt = d["targets"][d["ep_id"][idx]].float().div_(255)
-    return torch.stack([canv, tgt], 1), d["state"][idx], d["act"][idx]
+    if goal_drop > 0.0:
+        drop_mask = (torch.rand(len(idx), 1, 1, device=tgt.device) < goal_drop).float()
+        tgt = tgt * (1.0 - drop_mask)
+    obs = torch.stack([canv, tgt], 1)
+    task_id = d["task_ids"][d["ep_id"][idx]] if "task_ids" in d else None
+    return obs, d["state"][idx], d["act"][idx], task_id
 
 
 # ---------------------------------------------------------------------------
@@ -156,22 +176,23 @@ def val_loss(model, d, idx: torch.Tensor, bs: int = 128) -> float:
     tot = torch.zeros((), device=idx.device)
     for s in range(0, len(idx), bs):
         b = idx[s:s + bs]
-        obs, state, action = make_batch(d, b)
-        tot += model.loss(obs, state, action)[0] * len(b)
+        obs, state, action, task_id = make_batch(d, b)
+        tot += model.loss(obs, state, action, task_id=task_id)[0] * len(b)
         if idx.device.type == "xpu":
             torch.xpu.synchronize()
     return tot.item() / len(idx)
 
 
 @torch.no_grad()
-def val_predict(model, d, idx: torch.Tensor, bs: int = 128) -> dict:
+def val_predict(model, d, idx: torch.Tensor, bs: int = 128, goal_drop: float = 0.0) -> dict:
     model.eval()
     dev = idx.device
     acc = {k: torch.zeros((), device=dev) for k in ("xy", "pen_ok", "up_hit", "up_n", "first")}
     for s in range(0, len(idx), bs):
         b = idx[s:s + bs]
-        obs, state, action = make_batch(d, b)
-        xy, pen_prob = model.predict(obs, state)
+        obs, state, action, task_id = make_batch(d, b, goal_drop=goal_drop)
+        kw = {"task_id": task_id} if getattr(model, "task_emb", None) is not None else {}
+        xy, pen_prob = model.predict(obs, state, **kw)
         up = action[..., 2] < 0.5
         acc["xy"] += (xy - action[..., :2]).abs().mean() * len(b)
         acc["pen_ok"] += ((pen_prob > 0.5) == ~up).float().mean() * len(b)
@@ -232,6 +253,8 @@ def main() -> int:
                     help="궤적을 호 길이 간격으로 재샘플 (예: 0.004 ≈ 512px 기준 2px). 사람의 감속·머뭇거림 제거 (v4)")
     ap.add_argument("--normalize-strokes", action="store_true", help="로드 시 획 순서·방향 정규화 (원본 보존)")
     ap.add_argument("--state-embed", type=int, default=0, help="펜 상태를 이 차원으로 키워서 붙임 (0 = 그대로, v4는 64)")
+    ap.add_argument("--goal-drop", type=float, default=0.0,
+                    help="목표 도안 채널 드롭아웃 확률 (예: 0.5 = 50% 확률로 목표 도안을 0으로 비워 백지 캔버스 창작 모드 동시 학습)")
     ap.add_argument("--resume", action="store_true", help="outputs/train_state[_tag].pt에서 이어서 학습")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--files-from", help="이 텍스트 파일에 적힌 시연 파일 이름만 사용 (한 줄에 하나, data/raw 기준)")
@@ -245,7 +268,16 @@ def main() -> int:
     lr = args.lr or (3e-4 if is_decay else 1e-3)
 
     # 에피소드 단위 Train/Val 분할 (같은 그림의 인접 스텝이 양쪽에 섞이지 않게)
-    files = sorted((ROOT / "data" / "raw").glob(f"demo_{args.target}_*.json"))
+    target_slug = args.target.replace(",", "_")
+    if "," in args.target:
+        targets = [t.strip() for t in args.target.split(",") if t.strip()]
+        files = []
+        for t in targets:
+            files.extend(sorted((ROOT / "data" / "raw").glob(f"demo_{t}_*.json")))
+    else:
+        targets = [args.target.strip()]
+        files = sorted((ROOT / "data" / "raw").glob(f"demo_{args.target}_*.json"))
+    task_map = {t: i for i, t in enumerate(targets)}
     if args.files_from:   # 일부 시연만 (예: 획 구성이 다른 시연을 빼고 비교 학습)
         keep = {ln.strip() for ln in Path(args.files_from).read_text(encoding="utf-8").splitlines() if ln.strip()}
         files = [f for f in files if f.name in keep]
@@ -264,7 +296,7 @@ def main() -> int:
     rs = f"_r{args.resample_step:g}" if args.resample_step else ""
     if args.normalize_strokes:
         rs += "_normalized"
-    arr = build_arrays(ds, OUT_DIR / f"cache_{args.target}{rs}.npz")
+    arr = build_arrays(ds, OUT_DIR / f"cache_{target_slug}{rs}.npz", task_map=task_map)
     val_paths = set(val_files)
     val_ep_ids = [e for e, ep in enumerate(ds.episodes) if ep.path in val_paths]
     is_val = np.isin(arr["ep_id"], val_ep_ids)
@@ -282,7 +314,10 @@ def main() -> int:
            "obs_size": OBS_SIZE, "state_dim": 0 if args.no_state else 3, "target": args.target, "tag": args.tag,
            "pen_up_weight": args.pen_up_weight if not diffusion else None, "aug": not args.no_aug,
            "state_embed": 0 if args.no_state else args.state_embed, "resample_step": args.resample_step,
-           "normalize_strokes": args.normalize_strokes}
+           "normalize_strokes": args.normalize_strokes,
+           "num_tasks": len(targets),
+           "task_map": task_map,
+           "goal_drop": args.goal_drop}
     if diffusion:
         cfg["diffusion"] = {"hidden": 512, "n_blocks": 4, "train_steps": 100, "infer_steps": 10, "noise_repeats": 4}
     elif args.head == "transformer":
@@ -302,8 +337,8 @@ def main() -> int:
 
     OUT_DIR.mkdir(exist_ok=True)
     sfx = tag_suffix(args.tag)
-    ckpt_path = OUT_DIR / f"{args.target}_vla_policy{sfx}.pth"
-    state_path = OUT_DIR / f"train_state{sfx}.pt"  # 에폭마다 덮어씀: XPU 장치 손실 등으로 죽으면 --resume
+    ckpt_path = OUT_DIR / f"{target_slug}_vla_policy{sfx}.pth"
+    state_path = OUT_DIR / f"train_state_{target_slug}{sfx}.pt"  # 에폭마다 덮어씀: XPU 장치 손실 등으로 죽으면 --resume
     log, best, step, start = [], float("inf"), 0, 1
     t_all = time.perf_counter()
     if args.resume and state_path.exists():
@@ -330,10 +365,11 @@ def main() -> int:
             b = perm[s:s + args.batch_size]
             if len(b) < 2:  # BatchNorm은 배치 2 이상 필요
                 continue
-            obs, state, action = make_batch(d, b)
+            obs, state, action, task_id = make_batch(d, b, goal_drop=args.goal_drop)
             if cfg["aug"]:
                 obs, state = augment(obs, state)
-            loss, parts = model.loss(obs, state, action)
+            kw = {"task_id": task_id} if getattr(model, "task_emb", None) is not None else {}
+            loss, parts = model.loss(obs, state, action, **kw)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
@@ -355,7 +391,10 @@ def main() -> int:
         net = ema if diffusion else model
         va = {"loss": val_loss(net, d, val_idx_t)}
         if not diffusion or epoch % args.eval_every == 0 or epoch == args.epochs:
-            va.update(val_predict(net, d, pred_idx_t))
+            va.update(val_predict(net, d, pred_idx_t, goal_drop=0.0))
+            if args.goal_drop > 0:
+                va_blank = val_predict(net, d, pred_idx_t, goal_drop=1.0)
+                va["blank_xy"] = va_blank["xy"]
         sync(dev)
         if dev.type == 'xpu':
             torch.xpu.empty_cache()
@@ -367,7 +406,8 @@ def main() -> int:
             best, mark = score, "  *best"
             save(net, epoch, va)
         log.append({"epoch": epoch, "train": tr, "val": va, "sec": dt, "lr": sched.get_last_lr()[0]})
-        pred = (f", xy {va['xy'] * PX:4.1f}px, 첫스텝 {va['first_px']:4.1f}px, pen acc {va['pen_acc']:.1%},"
+        blank_str = f", blank_xy {va['blank_xy'] * PX:4.1f}px" if "blank_xy" in va else ""
+        pred = (f", xy {va['xy'] * PX:4.1f}px{blank_str}, 첫스텝 {va['first_px']:4.1f}px, pen acc {va['pen_acc']:.1%},"
                 f" 펜업 재현율 {va['pen_up_recall']:.0%}") if "xy" in va else ""
         trs = f"xy {tr['xy'] * PX:4.1f}px, pen {tr['pen']:.3f}" if "xy" in tr else f"eps {tr['eps']:.4f}"
         print(f"epoch {epoch:03d}/{args.epochs} | train {tr['loss']:.4f} ({trs}) | val {va['loss']:.4f}{pred}"
@@ -376,13 +416,15 @@ def main() -> int:
                     "opt": opt.state_dict(), "sched": sched.state_dict(), "log": log, "best": best, "step": step,
                     "epoch": epoch, "np_rng": np.random.get_state(), "torch_rng": torch.get_rng_state()}, state_path)
 
-    plot_curves(log, OUT_DIR / f"loss_curve{sfx}.png", args.tag or "v1")
-    (OUT_DIR / f"train_log{sfx}.json").write_text(json.dumps(log, indent=1), encoding="utf-8")
+    plot_path = OUT_DIR / f"loss_curve_{target_slug}{sfx}.png"
+    log_path = OUT_DIR / f"train_log_{target_slug}{sfx}.json"
+    plot_curves(log, plot_path, f"{target_slug} {args.tag or 'v1'}")
+    log_path.write_text(json.dumps(log, indent=1), encoding="utf-8")
     scored = [r for r in log if "xy" in r["val"]]
     best_ep = min(scored, key=lambda r: r["val"]["xy"])
     print(f"\n[done] {time.perf_counter() - t_all:.0f}s · best epoch {best_ep['epoch']} (xy {best_ep['val']['xy'] * PX:.1f}px,"
           f" 펜업 재현율 {best_ep['val']['pen_up_recall']:.0%}) → {ckpt_path}", flush=True)
-    print(f"[done] {OUT_DIR / f'loss_curve{sfx}.png'}", flush=True)
+    print(f"[done] {plot_path}", flush=True)
     return 0
 
 

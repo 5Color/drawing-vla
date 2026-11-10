@@ -36,6 +36,7 @@ import traceback
 import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -65,6 +66,8 @@ BANNED = ("시발", "씨발", "씨팔", "ㅅㅂ", "ㅆㅂ", "병신", "ㅂㅅ", 
 RESERVED = ("siat", "admin", "administrator", "관리자", "운영자", "운영진", "system", "root", "official", "ai")
 CACHE_PUBLIC = "public, max-age=0, s-maxage=15, stale-while-revalidate=60"   # Vercel CDN이 15초 캐시
 CACHE_LONG = "public, max-age=3600, s-maxage=86400"
+CACHE_TRAJ = "public, max-age=60, s-maxage=300"   # 기록 궤적: '내 기록 삭제'·운영자 숨김이 5분 안에 반영되게
+COPY_TIMEOUT_S = 4                                 # 복제 검사용 상위 기록 조회가 늦으면 검사를 건너뛰고 저장
 INPUTS = ("touch", "pen", "mouse")
 SITE_URL = "https://handvsai.vercel.app"   # 공유 링크·OG 이미지의 절대 주소 (요청 헤더로 바꿀 수 없게 고정)
 SECURITY_HEADERS = {
@@ -255,6 +258,33 @@ def _limits(db, iph: str, tk: str, trusted: bool, nick: str | None = None, owner
     return None
 
 
+_traj_cache: dict[str, list] = {}   # 기록 id → 궤적 (저장된 궤적은 바뀌지 않으므로 인스턴스 안에서 재사용)
+
+
+def _copy_candidates(db, target: str) -> list[tuple[str, float, list]]:
+    """복제 검사 대상 = 이 도안 리더보드 상위 기록들 [(id, 점수, 궤적), ...]."""
+    rows = _cached(f"lb{dbmod.LB_SIZE}:{target}", lambda: db.leaderboard(target, dbmod.LB_SIZE))
+    need = [r["id"] for r in rows if r.get("id") and r["id"] not in _traj_cache]
+    if need:
+        got = db.trajectories(need)
+        if len(_traj_cache) > 500:
+            _traj_cache.clear()
+        _traj_cache.update(got)
+    return [(r["id"], r.get("score") or 0, _traj_cache.get(r["id"])) for r in rows if r.get("id")]
+
+
+def _copy_check(f_cands, score: float, traj) -> tuple[str, float] | None:
+    """상위 기록과 선 모양이 거의 같으면 (그 기록 id, 거리 px). 조회·계산 실패는 저장을 막지 않고 건너뛴다."""
+    try:
+        cands = f_cands.result(timeout=COPY_TIMEOUT_S)
+        if len(cands) >= dbmod.LB_SIZE and score < min(s for _, s, _ in cands):
+            return None   # 상위권에 들지 못하는 기록은 복제해도 얻는 것이 없음 → 계산 생략
+        return sub.find_copy(traj, [(cid, t) for cid, _, t in cands if t])
+    except Exception as e:   # noqa: BLE001
+        print(f"[warn] 복제 검사 생략: {type(e).__name__}: {str(e)[:160]}", file=sys.stderr, flush=True)
+        return None
+
+
 def _input_type(strokes) -> str:
     n = {k: sum(len(s["points"]) for s in strokes if s["pointer_type"] == k) for k in ("touch", "pen", "mouse")}
     best = max(n, key=n.get)
@@ -305,6 +335,8 @@ def save(headers, body: bytes, peer: str | None = None) -> Response:
     if limited:
         return limited
 
+    # 복제 검사용 상위 기록 조회는 채점과 겹쳐서 (DB 왕복 시간을 숨김)
+    f_cands = _pool.submit(_copy_candidates, db, target)
     # 궤적은 서버가 원시 입력으로 직접 만든다 (클라이언트 trajectory는 받지 않음).
     # 목표 이미지(학습 관측 ch1)도 서버의 표준 이미지로 바꾼다 (클라이언트 이미지로 학습 데이터 오염 방지).
     payload["trajectory"] = sub.build_trajectory(payload["strokes"])
@@ -314,10 +346,13 @@ def save(headers, body: bytes, peer: str | None = None) -> Response:
     measures["time_repair_ms"] = meta.pop("time_repair_ms", 0)
     if measures["time_repair_ms"] > sub.MAX_TIME_REPAIR_MS:   # 0.5초 넘게 거꾸로 = 이벤트 섞임으로 볼 수 없음
         flags = sorted(set(flags) | {"time_backwards"})
-    review = not flags and sc["qualified"] and sc["avg_error"] < sub.REVIEW_AVG_ERROR_PX
+    copy = _copy_check(f_cands, sc["score"], payload["trajectory"]) if sc["qualified"] and not flags else None
+    if copy:       # 남의 상위 기록을 살짝 옮기거나 흔든 복제 의심 → 운영자가 보고 판단 (tools/moderate.py)
+        measures.update(copy_of=copy[0], copy_px=copy[1])
+    review = not flags and sc["qualified"] and (sc["avg_error"] < sub.REVIEW_AVG_ERROR_PX or copy is not None)
     if flags:      # 저장은 하되 기록으로 인정하지 않음 (리더보드·학습 제외)
         sc.update(qualified=False, reason="검증 실패")
-    elif review:   # 사람 기록보다 훨씬 정밀 → 운영자 확인 후 리더보드에 (tools/moderate.py)
+    elif review:   # 사람 기록보다 훨씬 정밀하거나 상위 기록과 거의 같음 → 운영자 확인 후 리더보드에 (tools/moderate.py)
         sc.update(qualified=False, reason="검토 대기")
     input_type = _input_type(payload["strokes"])
     meta.update(target=target, nickname=nickname, contributor=who, score=sc, smoothing="ma3x2",
@@ -387,17 +422,20 @@ def trajectory(query: dict) -> Response:
     if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", raw_id):
         return _json(400, {"ok": False, "error": "올바른 id가 아닙니다"})
 
+    # 인정된 기록(is_qualified)만: 검증 실패·검토 대기·운영자가 내린 기록(--hide)·낙서는 도전장·고스트로 보여 주지 않는다
     db = get_db()
     if isinstance(db, dbmod.SupabaseDB):
         res, _ = db._req("GET", "drawing_demos", {
             "select": "id,nickname,template_name,score,avg_error,input_type,trajectory_data",
             "id": f"eq.{raw_id}",
+            "is_qualified": "eq.true",
             "limit": 1
         })
         row = res[0] if (res and isinstance(res, list)) else None
     else:
         rows = db._rows(
-            "select id, nickname, template_name, score, avg_error, input_type, trajectory_data from drawing_demos where id=?",
+            "select id, nickname, template_name, score, avg_error, input_type, trajectory_data from drawing_demos "
+            "where id=? and is_qualified=1",
             (raw_id,)
         )
         row = rows[0] if rows else None
@@ -482,6 +520,18 @@ def cron(headers) -> Response:
 TIER_COLORS = {"S": (255, 196, 50), "A": (90, 200, 255), "B": (140, 220, 140), "C": (170, 170, 180)}
 
 
+@lru_cache(maxsize=1)
+def ai_scores() -> dict[str, float]:
+    """도안별 AI 점수 — index.html의 AI_DEMOS('AI vs 나' 결과 창과 같은 값)를 읽는다 (정의는 한 곳에만)."""
+    try:
+        src = scoring.INDEX_HTML.read_text(encoding="utf-8")
+        i = src.index("const AI_DEMOS")
+        line = src[i:src.index("\n", i)]
+    except (OSError, ValueError):
+        return {}
+    return {k: float(v) for k, v in re.findall(r'"([a-z0-9-]+)":\{"score":([0-9]+(?:\.[0-9]+)?)', line)}
+
+
 def share_params(query: dict) -> dict | None:
     """?score=96&tier=S&template=apple&time=12.4 검증. 하나라도 이상하면 None (기본 카드)."""
     try:
@@ -539,14 +589,16 @@ def og_image(query: dict) -> Response:
             d.text((tx, sub_y), f"TIME {p['time_text']}s", font=font(28), fill=(200, 210, 220))
             tx += int(d.textlength(f"TIME {p['time_text']}s", font=font(28))) + 28
 
-        diff = p["score"] - 87.2
-        if diff >= 0:
-            ai_badge = f"BEAT AI (+{diff:.1f}pts)"
-            badge_color = (52, 211, 153)
-        else:
-            ai_badge = f"VS AI ({diff:.1f}pts)"
-            badge_color = (248, 113, 113)
-        d.text((tx, sub_y), ai_badge, font=font(28), fill=badge_color)
+        ai_ref = ai_scores().get(p["template"])   # 이 도안의 AI 점수 (없으면 비교 배지 생략)
+        if ai_ref is not None:
+            diff = p["score"] - ai_ref
+            if diff >= 0:
+                ai_badge = f"BEAT AI (+{diff:.1f}pts)"
+                badge_color = (52, 211, 153)
+            else:
+                ai_badge = f"VS AI ({diff:.1f}pts)"
+                badge_color = (248, 113, 113)
+            d.text((tx, sub_y), ai_badge, font=font(28), fill=badge_color)
 
         d.rounded_rectangle((x0, 420, x0 + 90, 510), 18, fill=color)
         d.text((x0 + 45, 466), p["tier"], font=font(64), fill=(13, 17, 23), anchor="mm")
@@ -565,17 +617,21 @@ def og_image(query: dict) -> Response:
 def share_page(headers, query: dict) -> Response:
     site, p = site_url(headers), share_params(query)
     if p:
-        diff = p["score"] - 87.2
-        ai_status = f"AI 격파 (+{diff:.1f}점)!" if diff >= 0 else f"AI 기록(87.2점)까지 단 {abs(diff):.1f}점!"
+        ai_ref = ai_scores().get(p["template"])   # 이 도안의 AI 점수 (없으면 비교 문구 생략)
+        if ai_ref is None:
+            ai_status = ""
+        else:
+            diff = p["score"] - ai_ref
+            ai_status = f"AI 격파 (+{diff:.1f}점)!" if diff >= 0 else f"AI 기록({ai_ref:.1f}점)까지 {abs(diff):.1f}점!"
         time_info = f" ({p['time_text']}초)" if p.get("time_text") else ""
         time_qs = f"&time={p['time_text']}" if p.get("time_text") else ""
 
         title = f"{p['score_text']}점{time_info} · {p['tier']}급 {p['label']} | AI를 이겨라! 내 손 드로잉 정밀도 테스트"
-        desc = f"{ai_status} {p['template_label']} 도안 정밀도 {p['score_text']}점{time_info}. 내 손은 상위 몇 %일까? 지금 도전해 보세요."
+        desc = f"{ai_status + ' ' if ai_status else ''}{p['template_label']} 도안 정밀도 {p['score_text']}점{time_info}. 내 손은 상위 몇 %일까? 지금 도전해 보세요."
         og = f"{site}/api/og?score={p['score_text']}&tier={p['tier']}&template={p['template']}{time_qs}"
     else:
         title = "AI를 이겨라! 내 손 드로잉 정밀도 테스트"
-        desc = "화면을 보고 직접 선을 긋는 시각 제어 AI의 기록은 87.2점! 당신의 손가락은 몇 점인가요?"
+        desc = "화면을 보고 직접 선을 긋는 시각 제어 AI의 기록은 100.0점(S급 신의 손)! 당신의 손가락은 몇 점인가요?"
         og = f"{site}/api/og"
     e = html.escape
     page = f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
@@ -650,7 +706,7 @@ def canonical_query(name: str, headers, q: dict) -> str | None:
 
 def _cache_for(name: str, headers) -> str:
     return {"stats": stats_cache(headers), "leaderboard": CACHE_PUBLIC, "og": CACHE_LONG,
-            "share": CACHE_LONG, "trajectory": CACHE_LONG}.get(name, "no-store")
+            "share": CACHE_LONG, "trajectory": CACHE_TRAJ}.get(name, "no-store")
 
 
 def serve_get(handler, name: str) -> None:

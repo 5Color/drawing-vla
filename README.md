@@ -1,7 +1,25 @@
-# Drawing VLA (Hand vs AI)
+# Drawing VLA: Closed-Loop Visuomotor Action Chunking for Interactive Multi-Stroke Sketch Generation
 
-> **2D Canvas Trajectory Collection for VLA Action Chunking & Precision Drawing Benchmark**  
-> 사람의 손 드로잉(터치/펜) 궤적을 수집하여 미래 16스텝 궤적을 예측하는 VLA(Vision-Language-Action) 에이전트를 학습시키고, 사람과 AI의 드로잉 정밀도를 겨루는 실시간 웹 벤치마크 플랫폼입니다.
+> **Official repository for the paper:**  
+> *"Drawing VLA: Closed-Loop Visuomotor Action Chunking for Interactive Multi-Stroke Sketch Generation from Crowdsourced Demonstrations"*  
+> **Author:** Seungjun Son  
+>
+> [![Paper PDF](https://img.shields.io/badge/Paper-PDF-red?logo=adobeacrobatreader)](./Drawing_VLA.pdf)
+> [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
+---
+
+## 🎨 Overview & Visual Results
+
+Drawing VLA explores closed-loop visuomotor policy learning for precision 2D sketch generation. By predicting 16-step action chunks from dual-channel visual observations (current canvas state and target template), the model generates smooth, multi-stroke sketches while maintaining robust closed-loop error correction.
+
+### 1. Rollout Comparison (Action Chunking vs. Single-Step Autoregressive)
+![Figure 1: Rollout Comparison](./paper/figures/fig1_rollout_comparison.png)
+*Figure 1: Comparison between single-step autoregressive rollout and closed-loop Action Chunking. Action Chunking prevents error accumulation and generates clean stroke separation across multi-stroke drawing targets.*
+
+### 2. Real-Time Disturbance Recovery (+20px Perturbation)
+![Figure 4: Perturbation Recovery](./paper/figures/fig4_perturbation_recovery.png)
+*Figure 4: Closed-loop visual feedback enables real-time trajectory recovery when perturbed by external shifts (+20px disturbance).*
 
 ---
 

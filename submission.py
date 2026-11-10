@@ -27,6 +27,7 @@ import secrets
 import time
 from pathlib import Path
 
+import scoring
 from collect_common import _is_num
 
 # --- 크기 제한 (계산량·저장량 상한. 사람 시연 실측: 점 최대 735개, 한 획 길이 최대 2.25, 점 간격 최대 0.015) ---
@@ -40,7 +41,8 @@ META_STR = {"target", "target_label", "session_id", "created_at", "input_type", 
             "guide_hint"}   # guide_hint: 다음 획 안내 버전('next-v1') 또는 'off' — 획 순서별로 학습 데이터를 나눌 때
 META_NUM = {"episode_index", "num_strokes", "num_steps", "duration_ms", "guide_opacity", "undo_count", "undo_button_count", "undo_key_count", "clear_count", "first_stroke_delay_ms", "blur_ms", "active_duration_ms"}
 META_BOOL = {"guide_order_marks", "has_pressure"}
-DEVICE_KEYS = {"user_agent", "pointer_types", "device_pixel_ratio", "board_css_px", "screen_css_px"}
+DEVICE_KEYS = {"user_agent", "pointer_types", "device_pixel_ratio", "board_css_px", "screen_css_px",
+               "secure_context", "coalesced_events"}
 SPEC = {   # 수집기 spec과 같은 값 (클라이언트가 보낸 spec은 쓰지 않음)
     "coord": "normalized [0,1], origin top-left, y down", "action_format": ["x", "y", "pen_down"],
     "pen_convention": "state, each stroke bracketed by pen-up points", "stroke_point_format": ["x", "y", "t_ms", "pressure"],
@@ -57,6 +59,8 @@ MIN_RATE, MAX_RATE = 5, 2000   # 초당 점 수 (멈춘 채 누르고 있으면 
 MIN_AVG_ERROR_PX = 0.5        # 이보다 정확하면 사람 손으로 보기 어려움 (사람 최소 2.0px)
 MAX_TIME_REPAIR_MS = 500      # 이만큼까지 시간이 거꾸로 간 점은 고쳐서 받음 (Safari 이벤트 시각 섞임). 넘으면 의심
 REVIEW_AVG_ERROR_PX = 0.8     # 이보다 정확하면 '확인 후 리더보드에' (사람 극한 1.0px, 0.8px 미만은 기계 정밀도 의심)
+COPY_PX = 0.8                 # 기존 상위 기록과 선 모양 평균 거리가 이보다 가까우면 '복제 의심' → 검토 대기
+                              # (실측: 사람끼리 최소 1.12px, 남의 그림을 0.6px 옮기거나 1px 흔든 복제는 0.16~0.63px)
 HARD_FLAGS = frozenset({"too_fast_total", "speed_avg", "speed_peak", "sample_rate"})   # 봇이 분명 → meta만 저장
 SOFT_FLAGS = frozenset({"too_perfect", "time_backwards", "time_order"})                # 사람 오탐 가능 → 원시 기록 보존
 
@@ -133,6 +137,9 @@ def _clean_meta(meta: dict) -> dict:
         sc = dev.get("screen_css_px")
         if isinstance(sc, list) and len(sc) == 2 and all(_is_num(v) for v in sc):
             d["screen_css_px"] = sc
+        for k in ("secure_context", "coalesced_events"):   # 펜 고속 샘플링(getCoalescedEvents) 지원 여부 — 데이터 품질 확인용
+            if isinstance(dev.get(k), bool):
+                d[k] = dev[k]
         out["device"] = d
     return out
 
@@ -244,6 +251,41 @@ def traj_hash(strokes) -> str:
     raw = json.dumps([[(round(p[0] * 1000), round(p[1] * 1000)) for p in s["points"]] for s in strokes],
                      separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+# ---------------------------------------------------------------------------
+# 복제 제출 검사 — 남의 상위 기록(/api/trajectory로 받을 수 있음)을 살짝 옮기거나 흔들어 내면 traj_hash는 달라진다.
+# 선 모양 자체가 거의 같은지 본다 (avg_error와 같은 방식: 0.004 간격 재샘플 선분, TOL에서 자른 양방향 평균 거리).
+# ---------------------------------------------------------------------------
+def _shape(traj):
+    lines = [scoring._resample(run) for run in scoring.pen_down_runs(traj)]
+    pts = [p for line in lines for p in line]
+    return (scoring._SegGrid(lines, scoring.TOL, cap=scoring.DRAW_CELL_CAP), pts) if pts else None
+
+
+def find_copy(traj, candidates, limit_px: float | None = None) -> tuple[str, float] | None:
+    """candidates = [(기록 id, 그 기록의 궤적), ...] 중 선 모양 평균 거리가 limit_px(기본 COPY_PX) 미만인
+    가장 가까운 것 → (id, px). limit_px ≤ 0이면 검사하지 않음."""
+    limit_px = COPY_PX if limit_px is None else limit_px
+    if limit_px <= 0:
+        return None
+    me = _shape(traj)
+    if not me:
+        return None
+    g_me, p_me = me
+    best = None
+    for cid, other in candidates:
+        them = _shape(other) if other else None
+        if not them:
+            continue
+        g_them, p_them = them
+        one_way = sum(map(g_them.dist, p_me)) / len(p_me) * scoring.UNITS
+        if one_way >= 2 * limit_px:   # 한쪽 방향만으로도 충분히 멀면 반대 방향은 계산하지 않음
+            continue
+        px = (one_way + sum(map(g_me.dist, p_them)) / len(p_them) * scoring.UNITS) / 2
+        if px < limit_px and (best is None or px < best[1]):
+            best = (cid, round(px, 2))
+    return best
 
 
 # ---------------------------------------------------------------------------

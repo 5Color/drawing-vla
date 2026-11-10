@@ -165,15 +165,21 @@ class TestApi(unittest.TestCase):
         self.env.start()
         os.environ.pop("SUPABASE_URL", None)
         os.environ.pop("SUPABASE_KEY", None)
+        # 테스트는 같은 실제 시연을 첫 점만 1px 안팎 옮겨 여러 닉네임으로 다시 쓴다 = 복제 검사가 잡는 바로 그 모양.
+        # 다른 규칙을 보는 테스트가 흔들리지 않게 기본은 끄고, 복제 검사 전용 테스트에서만 켠다.
+        self.copy_off = mock.patch.object(submission, "COPY_PX", 0)
+        self.copy_off.start()
         import api_core
         api_core._db = None
         api_core._cache.clear()
+        api_core._traj_cache.clear()
         api_core._ev.update(minute=-1, hits={})
         self.api = api_core
         self.ip = iter(f"10.0.0.{i}" for i in range(1, 250))
 
     def tearDown(self):
         self.api._db = None
+        self.copy_off.stop()
         self.env.stop()
         self.tmp.cleanup()
 
@@ -309,6 +315,41 @@ class TestApi(unittest.TestCase):
 
         self.assertEqual(self.api.trajectory({"id": ["invalid-uuid"]})[0], 400)
         self.assertEqual(self.api.trajectory({"id": ["00000000-0000-0000-0000-000000000000"]})[0], 404)
+
+    def test_trajectory_endpoint_serves_only_qualified_records(self):
+        p = self.public("낙서꾼")
+        p["strokes"] = as_strokes([(0.1 + 0.008 * k, 0.1 + 0.008 * k) for k in range(100)], 20)
+        st, b = self.save(p)
+        self.assertEqual(st, 200, b)
+        self.assertFalse(b["qualified"])
+        self.assertEqual(self.api.trajectory({"id": [b["id"]]})[0], 404)          # 불합격 낙서는 도전장·고스트로 못 띄움
+        st, b = self.save(self.public("정상"))
+        self.api.get_db().update_demo(b["id"], {"is_qualified": 0})                # 운영자가 내린 기록 (--hide)
+        self.assertEqual(self.api.trajectory({"id": [b["id"]]})[0], 404)
+        self.assertNotIn("86400", self.api._cache_for("trajectory", headers()))     # 삭제·숨김이 하루씩 남지 않게
+
+    def test_jittered_copy_of_top_record_held_for_review(self):
+        with mock.patch.object(submission, "COPY_PX", 0.8):
+            orig = demo_payload(0, unique=False)
+            orig["meta"].update(nickname="원작자", notice="v1")
+            st, b = self.save(orig)
+            self.assertEqual(st, 200, b)
+            self.assertTrue(b["qualified"])
+            fake = demo_payload(0, unique=False)                                    # 남의 1등 그림을 0.6px 옮겨 다시 냄
+            fake["meta"].update(nickname="복제범", notice="v1")
+            for s_ in fake["strokes"]:
+                for pt in s_["points"]:
+                    pt[0] = min(1, pt[0] + 0.0012)
+            st, c = self.save(fake)
+            self.assertEqual(st, 200, c)                                            # traj_hash는 달라서 저장은 됨
+            self.assertEqual((c["qualified"], c["review"], c["reason"]), (False, True, "검토 대기"))
+            checks = self.rows()["복제범"]["meta"]["checks"]
+            self.assertEqual(checks["copy_of"], b["id"])
+            self.assertLess(checks["copy_px"], 0.8)
+            other = self.public("다른사람", 1)                                       # 다른 사람의 진짜 그림은 그대로 인정
+            st, d = self.save(other)
+            self.assertEqual((st, d["qualified"], d["review"]), (200, True, False))
+            self.assertNotIn("copy_of", self.rows()["다른사람"]["meta"]["checks"])
 
     def test_ticket_required_fresh_signed_single_use(self):
         p = self.public("티켓")
