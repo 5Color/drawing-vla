@@ -37,14 +37,13 @@ def main() -> int:
     sc = scoring.score_trajectory(args.template, traj)
 
     src = HTML.read_text(encoding="utf-8")
-    m = re.search(re.escape(BEGIN) + r"\n(.*?)\n\s*" + re.escape(END), src, re.S)
-    demos = json.loads(m.group(1).split("=", 1)[1].strip().rstrip(";")) if m else {}
+    m = re.search(r"const AI_DEMOS = (\{.*?\});", src)
+    if not m:
+        raise SystemExit(f"{HTML.name}에서 const AI_DEMOS 선언을 찾을 수 없습니다")
+    demos = json.loads(m.group(1))
     demos[args.template] = {"score": sc["score"], "model": args.model, "traj": traj}   # 사람과 같은 버림 규칙
-    block = f"{BEGIN}\nconst AI_DEMOS = {json.dumps(demos, separators=(',', ':'))};\n{END}"
-    if m:
-        src = src[:m.start()] + block + src[m.end():]
-    else:
-        raise SystemExit(f"{HTML.name}에 {BEGIN} … {END} 표식이 없습니다")
+    new_decl = f"const AI_DEMOS = {json.dumps(demos, separators=(',', ':'))};"
+    src = src[:m.start()] + new_decl + src[m.end():]
     HTML.write_text(src, encoding="utf-8")
     print(f"[ai-demo] {args.template}: {args.model} {sc['score']:.1f}점 ({len(traj)}스텝) → {HTML.name}")
     return 0

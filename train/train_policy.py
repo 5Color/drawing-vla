@@ -360,8 +360,8 @@ def main() -> int:
         if dev.type == 'xpu':
             torch.xpu.empty_cache()
         dt = time.perf_counter() - t_ep
-        # 체크포인트 기준: mlp = 검증 손실, diffusion = 샘플링한 청크의 좌표 오차
-        score = va.get("xy", float("inf")) if diffusion else va["loss"]
+        # 체크포인트 기준: 좌표 오차(xy)가 가장 낮은 에포크를 저장
+        score = va.get("xy", va["loss"])
         mark = ""
         if score < best:
             best, mark = score, "  *best"
@@ -379,7 +379,7 @@ def main() -> int:
     plot_curves(log, OUT_DIR / f"loss_curve{sfx}.png", args.tag or "v1")
     (OUT_DIR / f"train_log{sfx}.json").write_text(json.dumps(log, indent=1), encoding="utf-8")
     scored = [r for r in log if "xy" in r["val"]]
-    best_ep = min(scored, key=lambda r: r["val"]["xy"] if diffusion else r["val"]["loss"])
+    best_ep = min(scored, key=lambda r: r["val"]["xy"])
     print(f"\n[done] {time.perf_counter() - t_all:.0f}s · best epoch {best_ep['epoch']} (xy {best_ep['val']['xy'] * PX:.1f}px,"
           f" 펜업 재현율 {best_ep['val']['pen_up_recall']:.0%}) → {ckpt_path}", flush=True)
     print(f"[done] {OUT_DIR / f'loss_curve{sfx}.png'}", flush=True)
