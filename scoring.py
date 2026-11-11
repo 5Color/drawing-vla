@@ -20,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 INDEX_HTML = ROOT / "collector" / "index.html"
+TEMPLATES_JSON = ROOT / "templates.json"
 UNITS = 512.0
 TOL = 0.02
 NARROW_TOL = 0.01
@@ -58,13 +59,19 @@ def tier_for(score: float) -> tuple[str, str, str]:
 @lru_cache(maxsize=1)
 def load_templates(html_path: str = str(INDEX_HTML)) -> dict[str, dict]:
     """{key: {"label": str, "paths": [d, ...]}}"""
-    src = Path(html_path).read_text(encoding="utf-8")
-    block = src[src.index("const TEMPLATES"):]
-    block = block[: block.index("\n};") + 3]
-    out = {}
-    for m in re.finditer(r"(\w+):\s*\{\s*label:\s*'([^']*)',\s*paths:\s*\[(.*?)\]", block, re.S):
-        out[m.group(1)] = {"label": m.group(2), "paths": re.findall(r"'([^']+)'", m.group(3))}
-    return out
+    p = Path(html_path)
+    if p.exists():
+        src = p.read_text(encoding="utf-8")
+        block = src[src.index("const TEMPLATES"):]
+        block = block[: block.index("\n};") + 3]
+        out = {}
+        for m in re.finditer(r"(\w+):\s*\{\s*label:\s*'([^']*)',\s*paths:\s*\[(.*?)\]", block, re.S):
+            out[m.group(1)] = {"label": m.group(2), "paths": re.findall(r"'([^']+)'", m.group(3))}
+        return out
+    if TEMPLATES_JSON.exists():
+        import json
+        return json.loads(TEMPLATES_JSON.read_text(encoding="utf-8"))
+    raise FileNotFoundError(f"Neither {html_path} nor {TEMPLATES_JSON} found")
 
 
 def _bez(p, n):

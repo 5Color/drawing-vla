@@ -1,6 +1,0 @@
-User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /s
-
-Sitemap: https://handvsai.vercel.app/sitemap.xml

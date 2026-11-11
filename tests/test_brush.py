@@ -9,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "train")]
 
 import brush  # noqa: E402
-import submission  # noqa: E402
 
 
 class TestBrush(unittest.TestCase):
@@ -49,15 +48,6 @@ class TestBrush(unittest.TestCase):
         img = np.asarray(brush.render(runs, 128).convert("L"))
         self.assertEqual(img.shape, (128, 128))
         self.assertLess(img.min(), 100)   # 잉크가 그려짐
-
-
-class TestPressureFlag(unittest.TestCase):
-    def test_has_pressure_rules(self):
-        pen = lambda ps: [{"pointer_type": "pen", "points": [[0.5, 0.5, i, p] for i, p in enumerate(ps)]}]
-        self.assertTrue(submission.has_pressure(pen([0.21, 0.35, 0.52, 0.48])))
-        self.assertFalse(submission.has_pressure(pen([0.5, 0.5, 0.5, 0.5])))     # 마우스·터치 기본값
-        self.assertFalse(submission.has_pressure([{"pointer_type": "touch",
-                                                   "points": [[0.5, 0.5, i, i / 10] for i in range(5)]}]))
 
 
 if __name__ == "__main__":

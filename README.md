@@ -52,19 +52,17 @@ Autoregressive sequence models for vector sketch generation (e.g., SketchRNN) ty
 
 ```
 drawing-vla/
-├── collector/          # Zero-dependency Vanilla HTML/JS canvas benchmark & collection client
 ├── train/              # Visuomotor policy architectures, training, and closed-loop rollout
 │   ├── policies.py     # ACT (Transformer) and Convolutional baseline policy models
 │   ├── dataset.py      # Dual-channel observation rendering and trajectory sampling
 │   ├── train_policy.py # Policy training pipeline (CUDA / Intel XPU / CPU)
 │   ├── rollout_eval.py # Closed-loop evaluation engine with receding-horizon ensembling
 │   └── brush.py        # Organic Catmull-Rom spline and pressure brush renderer
-├── api_core.py         # Benchmark backend, trajectory verification, and scoring logic
 ├── scoring.py          # Exact grid-indexed contour matching and dual-tolerance scoring
-├── submission.py       # Trajectory validation, human-motion verification, and anti-abuse
-├── server.py           # Standalone local data collection and evaluation server
+├── templates.json      # Standard benchmark drawing vector templates (12 targets)
+├── targets_128.json    # Pre-rendered 128×128 standard target canvas tensors
 ├── paper/              # LaTeX source, benchmark figures, and perturbation results
-├── tests/              # Comprehensive test suite (scoring, anti-abuse, benchmark APIs)
+├── tests/              # Test suite (scoring, policy rollouts, dataset, brush)
 └── Drawing_VLA.pdf     # Full paper PDF
 ```
 
@@ -74,7 +72,7 @@ drawing-vla/
 
 ### 1. Requirements and Setup
 
-The benchmark and collection server runs with zero external dependencies (Python standard library only). For training and evaluating visuomotor policies:
+The benchmark and evaluation scripts run with minimal dependencies. For training and evaluating visuomotor policies:
 
 ```bash
 git clone https://github.com/5Color/drawing-vla.git
@@ -82,17 +80,14 @@ cd drawing-vla
 pip install -r requirements.txt
 ```
 
-### 2. Run Local Data Collection & Game Server
-Start the standalone local collection server on port 8000:
-```bash
-python server.py
-# Open http://localhost:8000 in your browser (tablet stylus or touch supported)
-```
+### 2. Live Interactive Benchmark Platform
+Try the live interactive benchmark and test your drawing skills against the AI agent in real time:
+- **Web App:** [https://handvsai.vercel.app](https://handvsai.vercel.app) *(Stylus, Apple Pencil, mouse, and touch supported)*
 
-### 3. Run Benchmark Test Suite
-Execute the test suite to verify scoring, trajectory generation, and security checks:
+### 3. Run Test Suite
+Execute the test suite to verify scoring algorithms, observation tensors, and policy architectures:
 ```bash
-python -m unittest tests.test_benchmark
+python -m unittest tests.test_scoring_b tests.test_brush tests.test_dataset tests.test_rollout tests.test_training
 ```
 
 ### 4. Training and Closed-Loop Rollout

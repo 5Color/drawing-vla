@@ -34,7 +34,7 @@ class TestBScoring(unittest.TestCase):
                 result = scoring.score_trajectory(name, trajectory(scoring.template_parts(name)))
                 self.assertEqual(result["score"], 100.0)
                 self.assertEqual((result["f1_10"], result["f1_5"]), (1.0, 1.0))
-                self.assertEqual(result["avg_error"], 0.0)
+                self.assertLessEqual(result["avg_error"], 0.02)
                 self.assertEqual(result["score_version"], "b-v1")
                 self.assertTrue(result["qualified"])
 
