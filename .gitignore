@@ -5,6 +5,8 @@
 .claude/
 .codex/
 .agents/
+CLAUDE.md
+
 
 # Original player data, checkpoints, caches and generated artifacts
 /data/
