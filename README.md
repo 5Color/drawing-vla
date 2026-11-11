@@ -1,5 +1,6 @@
 # Drawing-VLA: Closed-Loop Visuomotor Action Chunking for Interactive Multi-Stroke Sketch Generation from Crowdsourced Demonstrations
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24122154.svg)](https://doi.org/10.5281/zenodo.24122154)
 [![Paper](https://img.shields.io/badge/Paper-PDF-red?logo=adobeacrobatreader)](./Drawing_VLA.pdf)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -105,7 +106,9 @@ If you find this work or code useful in your research, please cite:
   title={Drawing-VLA: Closed-Loop Visuomotor Action Chunking for Interactive Multi-Stroke Sketch Generation from Crowdsourced Demonstrations},
   author={Son, Seungjoon},
   journal={arXiv preprint},
-  year={2026}
+  year={2026},
+  doi={10.5281/zenodo.24122154},
+  url={https://doi.org/10.5281/zenodo.24122154}
 }
 ```
 
