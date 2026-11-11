@@ -1,6 +1,7 @@
 # Drawing-VLA: Closed-Loop Visuomotor Action Chunking for Interactive Multi-Stroke Sketch Generation from Crowdsourced Demonstrations
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24122154.svg)](https://doi.org/10.5281/zenodo.24122154)
+[![Live Benchmark](https://img.shields.io/badge/Live%20Benchmark-Hand%20vs%20AI-success?logo=vercel)](https://handvsai.vercel.app)
 [![Paper](https://img.shields.io/badge/Paper-PDF-red?logo=adobeacrobatreader)](./Drawing_VLA.pdf)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -9,7 +10,7 @@ Official PyTorch implementation and web benchmark platform for the paper:
 **"Drawing-VLA: Closed-Loop Visuomotor Action Chunking for Interactive Multi-Stroke Sketch Generation from Crowdsourced Demonstrations"**  
 **Author:** Seungjoon Son (sonsjoon715@gmail.com)
 
-[Paper (PDF)](./Drawing_VLA.pdf) | [한국어 문서 (README_KO.md)](./README_KO.md)
+[Paper (PDF)](./Drawing_VLA.pdf) | [Live Benchmark Platform](https://handvsai.vercel.app) | [한국어 문서 (README_KO.md)](./README_KO.md)
 
 ---
 
@@ -35,7 +36,7 @@ Autoregressive sequence models for vector sketch generation (e.g., SketchRNN) ty
 * **Dual-Mode Synthesis:** Trained with 50% goal-channel dropout ($p_{\text{drop}} = 0.5$), enabling both guided template tracing and autonomous blank-canvas contour generation (0.887 F1) from memory.
 * **Real-Time Perturbation Recovery:** Smoothly compensates for unexpected $+20\text{px}$ (+0.156 normalized) end-effector shifts within 42 control steps.
 * **Edge Inference Efficiency:** Measures 6.11 ms per chunk (163 chunks/sec) on an Intel Core Ultra 5 325 edge CPU (4 threads), operating comfortably within a 60 Hz (16.67 ms) browser control budget.
-* **Crowdsourced Flywheel:** 324 verified human trajectories collected via a gamified web benchmark with real-time signed distance field (SDF) scoring and asynchronous ghost battles.
+* **Crowdsourced Flywheel:** 324 verified human trajectories collected via the live gamified web benchmark platform [Hand vs AI](https://handvsai.vercel.app) featuring real-time signed distance field (SDF) scoring, asynchronous 1:1 ghost battles, and an adaptive "Hidden Boss" challenge.
 
 ---
 

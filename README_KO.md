@@ -5,8 +5,12 @@
 > **Author:** Seungjoon Son  
 >
 > [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24122154.svg)](https://doi.org/10.5281/zenodo.24122154)
+> [![Live Benchmark](https://img.shields.io/badge/Live%20Benchmark-Hand%20vs%20AI-success?logo=vercel)](https://handvsai.vercel.app)
 > [![Paper PDF](https://img.shields.io/badge/Paper-PDF-red?logo=adobeacrobatreader)](./Drawing_VLA.pdf)
 > [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+>
+> 🎮 **실시간 웹 벤치마크 플레이:** [https://handvsai.vercel.app](https://handvsai.vercel.app)  
+> 📄 **논문 원문 (PDF):** [Drawing_VLA.pdf](./Drawing_VLA.pdf)
 
 ---
 
