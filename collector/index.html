@@ -306,6 +306,25 @@
   .hud-chip:hover { color: var(--text); }
   .hud-chip[aria-pressed="true"] { background: var(--raised); color: #7dd3fc; box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.45); }
   #varChips .hud-chip[aria-pressed="true"] { color: #ffc432; box-shadow: inset 0 0 0 1px rgba(255, 196, 50, 0.45); }
+  .hud-grp.studio-palette { gap: 5px; padding: 3px 6px; border-color: rgba(255, 176, 32, 0.45); }
+  .color-chip {
+    width: 20px; height: 20px; min-height: 20px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.3);
+    padding: 0; cursor: pointer; transition: transform .12s, box-shadow .12s, border-color .12s;
+  }
+  .color-chip:hover { transform: scale(1.15); border-color: #fff; }
+  .color-chip[aria-pressed="true"] {
+    border-color: #fff; transform: scale(1.22); box-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
+  }
+  .studio-preview-box {
+    display: flex; gap: 14px; align-items: center; justify-content: center;
+    background: #090d13; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+  }
+  .studio-preview-box canvas { border-radius: 6px; border: 1px solid #2b3440; background: #000; }
+  .studio-code-box {
+    width: 100%; min-height: 90px; max-height: 150px; font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 11px; line-height: 1.4; background: #090d13; color: #7dd3fc; border: 1px solid var(--line);
+    border-radius: 6px; padding: 8px; resize: vertical; user-select: text; -webkit-user-select: text;
+  }
 
   .btn {
     min-height: 50px; min-width: 0; padding: 0 6px; border-radius: 8px; white-space: nowrap;
@@ -502,6 +521,7 @@
     <div class="titlebar">
       <h1>AI를 이겨라! 내 손 드로잉 정밀도 테스트</h1>
       <div class="badges">
+        <button class="badge icon-btn" id="btnStudio" type="button" title="빼빼로 도안 공방" aria-label="도안 공방" style="color:#ffd75e; border-color:rgba(255,215,94,0.5);"><i data-px="pencil"></i> <span>도안 공방</span></button>
         <button class="badge icon-btn" id="btnDex" type="button" title="도감 & 칭호" aria-label="도감"><i data-px="trophy" data-cls="gold"></i> <span id="dexBadgeTxt">도감</span></button>
         <button class="badge icon-btn" id="btnSound" type="button"></button>
         <span class="badge ep" id="epBadge">EP 001</span>
@@ -539,6 +559,13 @@
           <button type="button" class="hud-chip" data-var="hand" aria-pressed="false" title="자연스러운 손그림풍 변형">손그림</button>
           <button type="button" class="hud-chip" data-var="chubby" aria-pressed="false" title="통통하고 둥근 비율 변형">통통</button>
           <button type="button" class="hud-chip" data-var="random" aria-pressed="false" title="매 판마다 스타일 랜덤 출제">🎲</button>
+        </div>
+        <div class="hud-grp studio-palette" id="studioBar" role="group" aria-label="펜 색상" hidden>
+          <button type="button" class="hud-chip color-chip" data-color="#5c3826" style="background:#5c3826;" aria-pressed="false" title="초콜릿 브라운"></button>
+          <button type="button" class="hud-chip color-chip" data-color="#ff7597" style="background:#ff7597;" aria-pressed="false" title="딸기 핑크"></button>
+          <button type="button" class="hud-chip color-chip" data-color="#d49b6a" style="background:#d49b6a;" aria-pressed="false" title="과자 스틱 베이지"></button>
+          <button type="button" class="hud-chip color-chip" data-color="#7dd3fc" style="background:#7dd3fc;" aria-pressed="true" title="시그니처 민트"></button>
+          <button type="button" class="hud-chip color-chip" data-color="#ffffff" style="background:#ffffff;" aria-pressed="false" title="화이트"></button>
         </div>
       </div>
       <div class="demo-chip" id="demoChip" aria-live="polite"></div>
@@ -618,6 +645,47 @@
   <footer class="footer">실시간 랭킹 등록 및 AI 대결 기능을 위해 플레이 궤적이 저장됩니다. <button id="btnForget" type="button">[내 기록 삭제]</button></footer>
 </main>
 <canvas id="confettiCv"></canvas>
+<div class="modal" id="studioModal" role="dialog" aria-modal="true" aria-labelledby="studioTitle">
+  <div class="sheet" style="width: min(100%, 460px);">
+    <div class="modal-head">
+      <h3 id="studioTitle">🍫 빼빼로 도안 스튜디오</h3>
+      <button class="ghost-btn close" id="btnStudioClose" type="button" aria-label="닫기">✕</button>
+    </div>
+    <p>그린 선들이 512×512 표준 SVG 벡터 경로 및 128×128 타겟으로 추출되었습니다.</p>
+    <div class="studio-preview-box">
+      <figure style="margin:0; text-align:center;">
+        <canvas id="studioCv512" width="140" height="140" style="width:140px; height:140px;" aria-label="512 벡터 미리보기"></canvas>
+        <figcaption style="font-size:11px; color:var(--muted); margin-top:4px;">512 벡터 도안</figcaption>
+      </figure>
+      <figure style="margin:0; text-align:center;">
+        <canvas id="studioCv128" width="128" height="128" style="width:128px; height:128px;" aria-label="128 표준 타겟"></canvas>
+        <figcaption style="font-size:11px; color:var(--muted); margin-top:4px;">128 AI 타겟</figcaption>
+      </figure>
+    </div>
+    <div class="row" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <label class="field" style="display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);">
+        <span>도안 영문 ID</span>
+        <input type="text" id="studioKey" value="pepero_1" style="min-height:36px; height:36px; font-size:13px;">
+      </label>
+      <label class="field" style="display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted);">
+        <span>도안 한글 이름</span>
+        <input type="text" id="studioLabel" value="빼빼로" style="min-height:36px; height:36px; font-size:13px;">
+      </label>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      <span style="font-size:12px; color:var(--muted);">생성된 도안 코드 (TEMPLATES 정의)</span>
+      <textarea class="studio-code-box" id="studioCode" readonly spellcheck="false"></textarea>
+    </div>
+    <div class="row" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <button class="btn" id="btnStudioCopy" type="button"><i data-px="copy"></i><span>도안 코드 복사</span></button>
+      <button class="btn" id="btnStudioDownloadJson" type="button"><i data-px="download"></i><span>JSON 다운로드</span></button>
+    </div>
+    <div class="row" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <button class="btn" id="btnStudioDownloadPng" type="button">🖼️ 그림 PNG 저장</button>
+      <button class="btn primary" id="btnStudioTest" type="button">✨ 선따기 시험해보기</button>
+    </div>
+  </div>
+</div>
 <div class="modal" id="dexModal" role="dialog" aria-modal="true" aria-labelledby="dexTitle">
   <div class="sheet">
     <div class="modal-head">
@@ -625,7 +693,7 @@
       <button class="ghost-btn close" id="btnDexClose" type="button" aria-label="닫기">✕</button>
     </div>
     <div class="dex-summary">
-      <div class="dex-stat"><span>수집 진행도</span><b id="dexProgress">0/10</b></div>
+      <div class="dex-stat"><span>수집 진행도</span><b id="dexProgress">0/12</b></div>
       <div class="dex-stat"><span>S급 달성</span><b id="dexSCount" style="color:var(--mark)">0개</b></div>
       <div class="dex-stat"><span>대표 칭호</span><b id="dexCurTitle">비기너</b></div>
     </div>
@@ -708,6 +776,8 @@ const OBS_W = 8;
 const INK_W = 5;
 const GUIDE_W = 6;
 const INK_COLOR = '#7dd3fc';
+let activeInkColor = INK_COLOR;
+let isStudioMode = false;
 const DPR_MAX = 3;
 
 const TEMPLATES = {
@@ -779,6 +849,31 @@ const TEMPLATES = {
     'M196 196 A20 20 0 1 0 236 196 A20 20 0 1 0 196 196 Z',
     'M290 168 A15 15 0 1 0 320 168 A15 15 0 1 0 290 168 Z',
   ], order: [{ i: 0, name: '갓' }, { i: 1, name: '대' }, { i: 2, name: '점' }, { i: 3, name: '점' }]},
+  pepero_bear: { label: '🐻 곰돌이 빼빼로', paths: [
+    'M210 160 C190 140 178 108 200 90 C220 72 242 94 246 118 C252 116 260 116 266 118 C270 94 292 72 312 90 C334 108 322 140 302 160 C324 195 320 240 298 268 C278 290 234 290 214 268 C192 240 188 195 210 160 Z',
+    'M236 270 L236 415 C236 432 245 442 256 442 C267 442 276 432 276 415 L276 270',
+    'M212 268 C226 284 240 262 256 278 C272 262 286 284 300 268',
+    'M226 182 L238 188 L226 194',
+    'M274 194 L284 184 L294 194',
+    'M250 206 L256 200 L262 206 M256 200 L256 210 M250 214 C253 220 256 218 256 210 C256 218 259 220 262 214',
+    'M200 115 C208 108 220 116 222 126',
+    'M312 115 C304 108 292 116 290 126',
+  ], order: [
+    { i: 0, name: '곰돌이 머리' }, { i: 1, name: '과자 막대', how: '아래로' }, { i: 2, name: '초코 웨이브' },
+    { i: 3, name: '왼쪽 눈' }, { i: 4, name: '오른쪽 눈' }, { i: 5, name: '코와 입' },
+    { i: 6, name: '왼쪽 귀' }, { i: 7, name: '오른쪽 귀' },
+  ]},
+  pepero_heart: { label: '🍫 하트 빼빼로', paths: [
+    'M256 85 C238 85 230 98 230 114 L230 408 C230 424 238 437 256 437 C274 437 282 424 282 408 L282 114 C282 98 274 85 256 85 Z',
+    'M230 315 C238 330 248 310 258 326 C264 332 272 324 282 316',
+    'M256 126 C253 118 245 114 239 120 C232 127 234 136 242 144 L256 158 L270 144 C278 136 280 127 273 120 C267 114 259 118 256 126 Z',
+    'M231 195 C243 208 256 194 281 206',
+    'M231 235 C243 248 256 234 281 246',
+    'M231 275 C243 288 256 274 281 286',
+  ], order: [
+    { i: 0, name: '스틱 본체', how: '시계' }, { i: 1, name: '초코 웨이브' }, { i: 2, name: '하트' },
+    { i: 3, name: '드리즐 1' }, { i: 4, name: '드리즐 2' }, { i: 5, name: '드리즐 3' },
+  ]},
 };
 for (const t of Object.values(TEMPLATES)) t.path2d = t.paths.map(d => new Path2D(d));
 const HEART_ALT_PATHS = {
@@ -1162,9 +1257,9 @@ function drawGuide() {
   guideCtx.strokeStyle = '#ffffff';
   strokeTemplate(guideCtx, targetSel.value, px / UNITS, GUIDE_W);
 }
-function inkStyle() {
+function inkStyle(color = activeInkColor) {
   inkCtx.setTransform(1, 0, 0, 1, 0, 0);
-  inkCtx.strokeStyle = inkCtx.fillStyle = INK_COLOR;
+  inkCtx.strokeStyle = inkCtx.fillStyle = color || INK_COLOR;
   inkCtx.lineWidth = INK_W * px / UNITS;
   inkCtx.lineCap = 'round'; inkCtx.lineJoin = 'round';
 }
@@ -1172,8 +1267,14 @@ function redrawInk() {
   inkStyle();
   inkCtx.clearRect(0, 0, px, px);
   const r = inkCtx.lineWidth / 2;
-  for (const s of strokes) drawPts(inkCtx, smoothPts(s.pts), px, r, true);
-  if (cur) drawPts(inkCtx, smoothPts(cur.pts), px, r, true);
+  for (const s of strokes) {
+    inkCtx.strokeStyle = inkCtx.fillStyle = s.color || INK_COLOR;
+    drawPts(inkCtx, smoothPts(s.pts), px, r, true);
+  }
+  if (cur) {
+    inkCtx.strokeStyle = inkCtx.fillStyle = cur.color || activeInkColor || INK_COLOR;
+    drawPts(inkCtx, smoothPts(cur.pts), px, r, true);
+  }
 }
 function renderObsCanvas() {
   const c = obsCanvasCtx;
@@ -1386,8 +1487,9 @@ inkCv.addEventListener('pointerdown', e => {
     if (hosted && (!ticket || Date.now() - ticketAt > TICKET_REFRESH_MS)) fetchTicket();
   }
   if (!startSent) { startSent = true; setTimeout(beacon, 0, 'start'); }
-  cur = { type: e.pointerType || 'unknown', pts: [], drawn: 0 };
+  cur = { type: e.pointerType || 'unknown', pts: [], drawn: 0, color: activeInkColor };
   const p = addPoint(e);
+  inkCtx.strokeStyle = inkCtx.fillStyle = activeInkColor;
   inkCtx.beginPath();
   inkCtx.arc(p[0] * px, p[1] * px, inkCtx.lineWidth / 2, 0, Math.PI * 2);
   inkCtx.fill();
@@ -1402,6 +1504,7 @@ inkCv.addEventListener('pointermove', e => {
   for (const ev of evs) addPoint(ev);
   const P = cur.pts, upTo = P.length - 3;
   if (upTo > cur.drawn) {
+    inkCtx.strokeStyle = inkCtx.fillStyle = cur.color || activeInkColor;
     inkCtx.beginPath();
     for (let k = Math.max(1, cur.drawn + 1); k <= upTo; k++) {
       const c = s2(P, k - 1), b = mid(c, s2(P, k)), a = k >= 2 ? mid(s2(P, k - 2), c) : c;
@@ -1530,6 +1633,184 @@ btnUndo.addEventListener('click', () => {
   undo();
 });
 
+function rdp(points, epsilon) {
+  if (points.length < 3) return points;
+  const p1 = points[0], p2 = points[points.length - 1];
+  const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+  const lineLen = Math.hypot(dx, dy);
+  let maxDist = 0, index = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const p = points[i];
+    const d = lineLen === 0
+      ? Math.hypot(p[0] - p1[0], p[1] - p1[1])
+      : Math.abs(dy * p[0] - dx * p[1] + p2[0] * p1[1] - p2[1] * p1[0]) / lineLen;
+    if (d > maxDist) { maxDist = d; index = i; }
+  }
+  if (maxDist > epsilon) {
+    const left = rdp(points.slice(0, index + 1), epsilon);
+    const right = rdp(points.slice(index), epsilon);
+    return left.slice(0, -1).concat(right);
+  }
+  return [p1, p2];
+}
+
+function strokesToSvgPaths(stks, epsilon = 1.3) {
+  return stks.map(s => {
+    if (!s.pts || !s.pts.length) return '';
+    const smoothed = smoothPts(s.pts);
+    const pts512 = smoothed.map(p => [p[0] * 512, p[1] * 512]);
+    const simp = rdp(pts512, epsilon);
+    if (!simp.length) return '';
+    const start = `M${Math.round(simp[0][0])} ${Math.round(simp[0][1])}`;
+    const lines = simp.slice(1).map(p => ` L${Math.round(p[0])} ${Math.round(p[1])}`).join('');
+    const first = simp[0], last = simp[simp.length - 1];
+    const isClosed = simp.length > 3 && Math.hypot(last[0] - first[0], last[1] - first[1]) < 12;
+    return isClosed ? `${start}${lines} Z` : `${start}${lines}`;
+  }).filter(Boolean);
+}
+
+function enterStudioMode() {
+  isStudioMode = true;
+  guideCtx.setTransform(1, 0, 0, 1, 0, 0);
+  guideCtx.clearRect(0, 0, px, px);
+  hintCtx.setTransform(1, 0, 0, 1, 0, 0);
+  hintCtx.clearRect(0, 0, px, px);
+  obsTargetCtx.setTransform(1, 0, 0, 1, 0, 0);
+  obsTargetCtx.fillStyle = '#000'; obsTargetCtx.fillRect(0, 0, OBS, OBS);
+  $('studioBar').hidden = false;
+  $('varChips').hidden = true;
+  $('btnSave').textContent = '🎨 도안 추출하기';
+  $('subtitle').innerHTML = '🍫 <b>빼빼로 도안 공방:</b> 원하는 빼빼로를 자유롭게 그리고 [도안 추출하기]를 눌러보세요!';
+  $('tInfo').innerHTML = '자유 캔버스 · 도안 제작 모드';
+}
+
+function exitStudioMode() {
+  if (!isStudioMode) return;
+  isStudioMode = false;
+  $('studioBar').hidden = true;
+  $('varChips').hidden = false;
+  $('btnSave').textContent = '채점하기';
+  $('subtitle').innerHTML = '화면을 보고 직접 선을 긋는 시각 제어 AI의 기록은 <b id="aiRecord">100.0점</b>! 당신의 손가락은 몇 점인가요?';
+}
+
+function openStudioModal() {
+  const modal = $('studioModal');
+  if (!modal) return;
+  const paths = strokesToSvgPaths(strokes);
+  if (!paths.length) { showToast('유효한 선이 없습니다.', 'warn'); return; }
+
+  const cv512 = $('studioCv512'), ctx512 = cv512.getContext('2d');
+  ctx512.setTransform(1, 0, 0, 1, 0, 0);
+  ctx512.fillStyle = '#05080c'; ctx512.fillRect(0, 0, cv512.width, cv512.height);
+  const s512 = cv512.width / UNITS;
+  ctx512.setTransform(s512, 0, 0, s512, 0, 0);
+  ctx512.lineWidth = 4; ctx512.lineCap = 'round'; ctx512.lineJoin = 'round';
+  paths.forEach((p, i) => {
+    ctx512.strokeStyle = strokes[i]?.color || '#7dd3fc';
+    ctx512.stroke(new Path2D(p));
+  });
+
+  const cv128 = $('studioCv128'), ctx128 = cv128.getContext('2d');
+  ctx128.setTransform(1, 0, 0, 1, 0, 0);
+  ctx128.fillStyle = '#000000'; ctx128.fillRect(0, 0, 128, 128);
+  const s128 = 128 / UNITS;
+  ctx128.setTransform(s128, 0, 0, s128, 0, 0);
+  ctx128.strokeStyle = '#ffffff';
+  ctx128.lineWidth = OBS_W * OBS / UNITS;
+  ctx128.lineCap = 'round'; ctx128.lineJoin = 'round';
+  paths.forEach(p => ctx128.stroke(new Path2D(p)));
+
+  const target128DataUrl = cv128.toDataURL('image/png');
+
+  function updateCode() {
+    const key = ($('studioKey').value.trim() || 'pepero_1').replace(/[^a-zA-Z0-9_]/g, '_');
+    const label = $('studioLabel').value.trim() || '빼빼로';
+    const code = `  ${key}: {\n    label: '${label}',\n    paths: [\n` +
+      paths.map(p => `      '${p}',`).join('\n') +
+      `\n    ],\n    order: [\n` +
+      paths.map((_, i) => `      { i: ${i}, name: '획 ${i + 1}' },`).join('\n') +
+      `\n    ]\n  },`;
+    $('studioCode').value = code;
+  }
+  updateCode();
+  $('studioKey').oninput = updateCode;
+  $('studioLabel').oninput = updateCode;
+
+  $('btnStudioCopy').onclick = () => {
+    navigator.clipboard.writeText($('studioCode').value).then(() => {
+      showToast('도안 코드가 클립보드에 복사되었습니다!', 'ok', 2000);
+    }).catch(() => {
+      $('studioCode').select();
+      showToast('코드를 직접 선택하여 복사하세요.', 'info', 2000);
+    });
+  };
+
+  $('btnStudioDownloadJson').onclick = () => {
+    const key = ($('studioKey').value.trim() || 'pepero_1').replace(/[^a-zA-Z0-9_]/g, '_');
+    const label = $('studioLabel').value.trim() || '빼빼로';
+    const data = {
+      key, label, paths, target_128: target128DataUrl,
+      created_at: new Date().toISOString(), num_strokes: strokes.length,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `template_${key}.json`; a.click();
+    URL.revokeObjectURL(url);
+    showToast('도안 JSON 파일이 다운로드되었습니다.', 'ok', 2000);
+  };
+
+  $('btnStudioDownloadPng').onclick = () => {
+    const expCv = document.createElement('canvas');
+    expCv.width = expCv.height = 1024;
+    const expCtx = expCv.getContext('2d');
+    expCtx.fillStyle = '#0d1117'; expCtx.fillRect(0, 0, 1024, 1024);
+    const s = 1024 / px; expCtx.setTransform(s, 0, 0, s, 0, 0);
+    for (const st of strokes) {
+      expCtx.strokeStyle = expCtx.fillStyle = st.color || '#7dd3fc';
+      drawPts(expCtx, smoothPts(st.pts), px, inkCtx.lineWidth / 2, true);
+    }
+    const a = document.createElement('a');
+    a.href = expCv.toDataURL('image/png');
+    a.download = `pepero_${Date.now()}.png`;
+    a.click();
+    showToast('그림 이미지가 다운로드되었습니다!', 'ok', 2000);
+  };
+
+  $('btnStudioTest').onclick = () => {
+    const key = ($('studioKey').value.trim() || 'pepero_1').replace(/[^a-zA-Z0-9_]/g, '_');
+    const label = $('studioLabel').value.trim() || '빼빼로';
+    TEMPLATES[key] = {
+      label, paths, path2d: paths.map(d => new Path2D(d)),
+      order: paths.map((_, i) => ({ i, name: `획 ${i + 1}` })),
+    };
+    let opt = Array.from(targetSel.options).find(o => o.value === key);
+    if (!opt) {
+      opt = new Option(`🍫 [내 도안] ${label}`, key);
+      targetSel.add(opt);
+    }
+    closeStudioModal();
+    targetSel.value = key;
+    setTarget(key);
+    drawMode = 'trace';
+    for (const b of $('modeChips').querySelectorAll('.hud-chip')) {
+      b.setAttribute('aria-pressed', b.dataset.mode === 'trace' ? 'true' : 'false');
+    }
+    applyOpacity();
+    showToast(`"${label}" 도안으로 선따기 모드를 시작합니다!`, 'ok', 2500);
+  };
+
+  modal.classList.add('open');
+  document.body.classList.add('modal-open');
+}
+
+function closeStudioModal() {
+  const modal = $('studioModal');
+  if (!modal) return;
+  modal.classList.remove('open');
+  document.body.classList.remove('modal-open');
+}
+
 function setTarget(key) {
   if (saving) return;
   if (demoRun) stopDemo(false);
@@ -1537,12 +1818,18 @@ function setTarget(key) {
   targetSel.value = key;
   lastTarget = key;
   resetCounters();
-  resetEpisode(); drawGuide(); renderObsTarget(); renderCounts(); renderTemplateInfo(); renderRecords(); savePrefs();
+  resetEpisode();
+  if (key === '__studio__') {
+    enterStudioMode();
+    return;
+  }
+  exitStudioMode();
+  drawGuide(); renderObsTarget(); renderCounts(); renderTemplateInfo(); renderRecords(); savePrefs();
   if ($('aiRecord')) { const curAi = AI_DEMOS[key]; $('aiRecord').textContent = curAi ? `${fmt(curAi.score)}점` : '–'; }
   loadLeaderboard();
   if (booted) scheduleDemo();
 }
-const DIFFICULTY = { apple: 2, sprout: 2, leaf: 2, ginkgo: 2, cat: 3, heart: 1, star: 1, fish: 2, house: 1, mushroom: 2 };
+const DIFFICULTY = { apple: 2, sprout: 2, leaf: 2, ginkgo: 2, cat: 3, heart: 1, star: 1, fish: 2, house: 1, mushroom: 2, pepero_bear: 2, pepero_heart: 2 };
 let lastQualified = {};
 function renderTemplateInfo() {
   const k = targetSel.value, d = DIFFICULTY[k] || 2, n = lastCounts[k] || 0, q = lastQualified[k] || 0, rec = myRecords()[k];
@@ -1727,6 +2014,11 @@ function setSaving(on) {
 }
 async function saveEpisode() {
   if (saving || forgetting || activeId !== null || modalOpen()) return;
+  if (isStudioMode) {
+    if (!strokes.length) { showToast('먼저 캔버스에 빼빼로나 그림을 그려보세요!', 'warn', 2000); return; }
+    openStudioModal();
+    return;
+  }
   if (!strokes.length) { showToast('먼저 도안을 따라 그려 주세요.', 'warn'); return; }
   if (hosted && !cred && !nickname) {
     if (!(await askNickname())) return;
@@ -2869,6 +3161,26 @@ $('varChips').addEventListener('click', e => {
   if (!strokes.length) scheduleDemo(false, 150);
 });
 
+$('studioBar').addEventListener('click', e => {
+  const btn = e.target.closest('.color-chip');
+  if (!btn) return;
+  activeInkColor = btn.dataset.color;
+  for (const b of $('studioBar').querySelectorAll('.color-chip')) {
+    b.setAttribute('aria-pressed', b === btn ? 'true' : 'false');
+  }
+  Sound.tap();
+  inkStyle();
+});
+$('btnStudioClose').addEventListener('click', closeStudioModal);
+$('studioModal').addEventListener('click', e => { if (e.target === $('studioModal')) closeStudioModal(); });
+$('btnStudio').addEventListener('click', () => {
+  Sound.tap();
+  if (strokes.length && !confirm('현재 그림을 지우고 도안 공방으로 이동할까요?')) return;
+  targetSel.value = '__studio__';
+  setTarget('__studio__');
+});
+
+targetSel.add(new Option('🎨 [도안 공방] 자유 캔버스 & 빼빼로 만들기', '__studio__'));
 for (const [k, t] of Object.entries(TEMPLATES)) targetSel.add(new Option(t.label, k));
 const prefs = store.get('prefs', {});
 if (prefs.target in TEMPLATES) targetSel.value = prefs.target;
@@ -2926,6 +3238,7 @@ btnForget.addEventListener('click', async () => {
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape' && $('nickModal').classList.contains('open')) { e.preventDefault(); $('nickCancel').click(); return; }
   if (e.key === 'Escape' && $('dexModal').classList.contains('open')) { e.preventDefault(); closeDexModal(); return; }
+  if (e.key === 'Escape' && $('studioModal').classList.contains('open')) { e.preventDefault(); closeStudioModal(); return; }
   if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
   if (!(e.ctrlKey || e.metaKey)) return;
   const k = e.key.toLowerCase();

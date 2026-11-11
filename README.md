@@ -20,6 +20,14 @@ Autoregressive sequence models for vector sketch generation (e.g., SketchRNN) ty
 
 **Drawing-VLA** reformulates 2D canvas sketching as a closed-loop robot end-effector manipulation task. Using an architecture inspired by Action Chunking with Transformers (ACT), the agent observes a 2-channel visual canvas state (accumulated ink + target template) alongside pen proprioception and discrete task tokens, predicting a chunk of $K = 16$ future trajectory waypoints in a receding-horizon manner.
 
+### Live Closed-Loop Visuomotor Rollouts (Autonomous Agent Generation)
+
+| Guided Tracing: Apple (3 strokes) | Multi-Stroke Decoupling: Sprout (4 strokes) |
+| :---: | :---: |
+| <img src="./paper/figures/rollout_apple.gif" width="360" alt="Drawing-VLA Apple Rollout" /> | <img src="./paper/figures/rollout_sprout.gif" width="360" alt="Drawing-VLA Sprout Rollout" /> |
+
+*Figure: Real-time closed-loop visuomotor rollouts predicted by the unified Drawing-VLA policy ($K=16$ action chunks, temporal ensembling, Catmull-Rom spline brush rendering). The agent coordinates visual canvas feedback and pen proprioception to transition cleanly across multi-stroke contours without compounding drift.*
+
 ### Closed-Loop Rollout vs. Single-Step Baseline
 ![Figure 1: Rollout Comparison](./paper/figures/fig1_rollout_comparison.png)
 *Figure 1: Comparison between single-step autoregressive rollout and closed-loop Action Chunking. Action Chunking prevents error accumulation and cleanly decouples multi-stroke trajectories on Apple (3 strokes) and Sprout (4 strokes).*
@@ -88,12 +96,19 @@ python -m unittest tests.test_benchmark
 ```
 
 ### 4. Training and Closed-Loop Rollout
+
+Pretrained model checkpoints are hosted on [GitHub Releases v1.0.0](https://github.com/5Color/drawing-vla/releases/tag/v1.0.0). Download the weights before evaluating:
+
 ```bash
-# 1) Train unified dual-mode ACT policy
-python train/train_policy.py --head transformer --epochs 60 --goal-drop 0.5
+# 1) Download pretrained ACT policy checkpoint
+mkdir -p outputs
+curl -L -o outputs/apple_vla_policy.pth https://github.com/5Color/drawing-vla/releases/download/v1.0.0/apple_vla_policy.pth
 
 # 2) Evaluate closed-loop rollout with temporal ensembling and organic brush rendering
 python train/rollout_eval.py --ckpt outputs/apple_vla_policy.pth --exec-steps 12 --ensemble --brush
+
+# 3) (Optional) Train unified dual-mode ACT policy from scratch
+python train/train_policy.py --head transformer --epochs 60 --goal-drop 0.5
 ```
 
 ---

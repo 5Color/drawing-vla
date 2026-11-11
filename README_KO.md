@@ -18,6 +18,14 @@
 
 Drawing VLA explores closed-loop visuomotor policy learning for precision 2D sketch generation. By predicting 16-step action chunks from dual-channel visual observations (current canvas state and target template), the model generates smooth, multi-stroke sketches while maintaining robust closed-loop error correction.
 
+### 🎥 실시간 자율 드로잉 롤아웃 (Live Closed-Loop Rollouts)
+
+| 가이드 선따기: 사과 (3획) | 다중 스트로크 분리: 새싹 (4획) |
+| :---: | :---: |
+| <img src="./paper/figures/rollout_apple.gif" width="360" alt="Drawing-VLA 사과 롤아웃" /> | <img src="./paper/figures/rollout_sprout.gif" width="360" alt="Drawing-VLA 새싹 롤아웃" /> |
+
+*Drawing-VLA 통합 정책 모델($K=16$ 액션 청킹, Temporal Ensembling, Catmull-Rom 스플라인 브러시 렌더러)이 캔버스 시각 피드백을 실시간으로 확인하며 자율 드로잉을 수행하는 실제 롤아웃 영상.*
+
 ### 1. Rollout Comparison (Action Chunking vs. Single-Step Autoregressive)
 ![Figure 1: Rollout Comparison](./paper/figures/fig1_rollout_comparison.png)
 *Figure 1: Comparison between single-step autoregressive rollout and closed-loop Action Chunking. Action Chunking prevents error accumulation and generates clean stroke separation across multi-stroke drawing targets.*
@@ -127,14 +135,17 @@ python tools/vercel_local.py
 python -m unittest discover tests
 ```
 
-### 4. 모델 학습 및 평가
+### 4. 모델 가중치 다운로드 및 롤아웃 평가
+학습된 모델 체크포인트는 [GitHub Releases v1.0.0](https://github.com/5Color/drawing-vla/releases/tag/v1.0.0)에 공개되어 있습니다:
 ```bash
-# 1) 데이터셋 형태 검증
+# 1) 사전 학습 가중치 다운로드
+mkdir -p outputs
+curl -L -o outputs/apple_vla_policy.pth https://github.com/5Color/drawing-vla/releases/download/v1.0.0/apple_vla_policy.pth
+
+# 2) 폐루프 롤아웃 평가 (붓 렌더링 및 Temporal Ensembling 포함)
+python train/rollout_eval.py --ckpt outputs/apple_vla_policy.pth --exec-steps 12 --ensemble --brush
+
+# 3) (선택) 데이터셋 검증 및 직접 재학습
 python train/dataset.py --resample-step 0.005
-
-# 2) Action Chunking 정책 학습
-python train/train_policy.py --tag v5b --resample-step 0.005 --epochs 60 --resume
-
-# 3) 폐루프 롤아웃 평가 (붓 렌더링 및 Temporal Ensembling 포함)
-python train/rollout_eval.py --ckpt outputs/apple_vla_policy_v5b.pth --exec-steps 12 --ensemble --brush
+python train/train_policy.py --head transformer --epochs 60 --goal-drop 0.5
 ```
