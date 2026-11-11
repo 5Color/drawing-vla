@@ -18,6 +18,12 @@ CLAUDE.md
 *.log
 *.sqlite*
 
+# Local backend and monitoring tools (kept private)
+tools/
+db.py
+api_core.py
+collect_common.py
+
 # Python environments and temporary files
 __pycache__/
 *.py[cod]
