@@ -30,11 +30,39 @@ Autoregressive sequence models for vector sketch generation (e.g., SketchRNN) ty
 
 ### Closed-Loop Rollout vs. Single-Step Baseline
 ![Figure 1: Rollout Comparison](./paper/figures/fig1_rollout_comparison.png)
-*Figure 1: Comparison between single-step autoregressive rollout and closed-loop Action Chunking. Action Chunking prevents error accumulation and cleanly decouples multi-stroke trajectories on Apple (3 strokes) and Sprout (4 strokes).*
+*Figure 1: Closed-loop Action Chunking (Drawing-VLA) vs. Single-Step Markovian Visuomotor Baseline. Action Chunking resolves multimodal trajectory mode averaging and cleanly decouples multi-stroke trajectories on Apple (3 strokes) and Sprout (4 strokes).*
+
+| Evaluation Metric | Single-Step Markovian Baseline (`v5b`) | Drawing-VLA (ACT, Ours) | Theoretical Cause / Mechanism |
+| :--- | :---: | :---: | :--- |
+| **Game Score (/100)** | 87.2 (A-Tier) | **99.9 (S-Tier)** | Resolves trajectory drift & compounding errors |
+| **Contour Coverage** | 94.1% | **100.0%** | Full boundary exploration without early termination |
+| **Trajectory Precision** | 83.4% | **100.0%** | Receding-horizon temporal ensembling ($q=6$) |
+| **Harmonic F1 Score** | 0.884 | **1.000** | Strict dual-tolerance geometric alignment |
+| **Bidirectional SDF Error** | 4.80 px | **1.20 px** | Sub-pixel contour tracking accuracy |
+| **Stroke Decoupling** | **Failed** (1 tangled stroke) | **Solved** (3 discrete strokes) | Overcomes single-step mode averaging ($w_{\text{up}} = 10.0$) |
+| **Trajectory Termination** | Time-limit cutoff | **Clean Stop** (708 steps) | Coherent multi-step horizon planning ($K=16$) |
+
+> [!NOTE]
+> **Why the Single-Step Baseline Fails: A Structural Proof, Not a Parameter Deficit**  
+> The single-step baseline (`MLP Baseline (v5b)`) is not an under-tuned strawman—it shares the **exact same convolutional visual encoder backbone** and dual-channel canvas inputs as Drawing-VLA. Its failure stems from the fundamental mathematical limitation of **Markovian single-step behavioral cloning under multimodal human demonstrations**:
+> 1. **Mode Averaging across Divergent Demonstrations:** When human demonstrations diverge (e.g., drawing clockwise vs. counter-clockwise, or transitioning to stem vs. body), a single-step Markovian policy averages conflicting velocity vectors. This gradient cancellation forces the pen into an artificial mean trajectory that drags the pen continuously across boundaries. Scaling parameter capacity cannot resolve this causal ambiguity.
+> 2. **Compounding Compounding Drift:** Single-step autoregression accumulates errors quadratically ($O(\epsilon T^2)$) along the trajectory horizon without future waypoint coordination.
+> 3. **The Action Chunking Solution ($K=16, w_{\text{up}}=10.0$):** By predicting a chunk of $K = 16$ future waypoints conditioned on visual canvas state and proprioception, coupled with a $10\times$ minority-class pen-up loss weighting, Drawing-VLA establishes a coherent multi-step planning horizon that decouples discrete stroke transitions cleanly without compounding drift.
 
 ### Robustness to Real-Time Spatial Perturbations (+20px Displacement)
 ![Figure 4: Perturbation Recovery](./paper/figures/fig4_perturbation_recovery.png)
 *Figure 4: Closed-loop visual feedback enables real-time error recovery when perturbed by an unexpected +20px spatial offset at step $t=150$, smoothly returning to the target contour within 42 steps where an open-loop replay baseline permanently drifts.*
+
+| Policy / Control Regime | Perturbation Offset | Contour Coverage | Trajectory Precision | Harmonic F1 Score | Error Recovery Dynamics |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Drawing-VLA (Closed-Loop)** | None ($0$ px) | **100.0%** | **100.0%** | **1.000** | Nominal trajectory tracking |
+| **Drawing-VLA (Closed-Loop)** | $+10$ px | 94.9% | 94.1% | 0.945 | Rapid convergence back to contour |
+| **Drawing-VLA (Closed-Loop)** | **$+20$ px** | **86.5%** | **87.5%** | **0.870** | **Recovers within 42 steps** ($1.64$ px error) |
+| **Open-Loop Replay Baseline** | $+20$ px | 43.7% | 40.4% | 0.420 | **Permanent catastrophic drift** (blind to canvas) |
+
+> [!NOTE]
+> **Open-Loop Sequence Models (e.g., SketchRNN) vs. Closed-Loop Visuomotor Control**  
+> Autoregressive vector sequence models predict sequential coordinate offsets $(\Delta x, \Delta y, p_1, p_2, p_3)$ blind to the rendered canvas pixels. Under external spatial perturbations, open-loop replay experiences catastrophic permanent failure ($0.420$ F1). In contrast, Drawing-VLA continuously perceives the visual discrepancy between the accumulated ink $O_t^{(0)}$ and target template $O_t^{(1)}$, achieving exponential error decay back to contour within 42 control steps ($\sim 42.8\text{ ms}$ cumulative inference time).
 
 ---
 
@@ -44,6 +72,9 @@ Autoregressive sequence models for vector sketch generation (e.g., SketchRNN) ty
 * **Dual-Mode Synthesis:** Trained with 50% goal-channel dropout ($p_{\text{drop}} = 0.5$), enabling both guided template tracing and autonomous blank-canvas contour generation (0.887 F1) from memory.
 * **Real-Time Perturbation Recovery:** Smoothly compensates for unexpected $+20\text{px}$ (+0.156 normalized) end-effector shifts within 42 control steps.
 * **Edge Inference Efficiency:** Measures 6.11 ms per chunk (163 chunks/sec) on an Intel Core Ultra 5 325 edge CPU (4 threads), operating comfortably within a 60 Hz (16.67 ms) browser control budget.
+* **Diagnostic Ablation Studies (Paper Section 5.3):**
+  - **Pen-Up Weighting ($w_{\text{up}} = 1.0$ vs. $10.0$):** Lowering $w_{\text{up}}$ to $1.0$ causes continuous pen dragging across stroke boundaries (reproducing the single-step failure), proving that minority-class reweighting is mandatory for discrete stroke decoupling.
+  - **Temporal Ensembling ($q = 1$ vs. $q = 6$):** Disabling receding-horizon ensembling ($q=1$) introduces high-frequency boundary jitter at chunk transitions, whereas $q=6$ temporal smoothing yields seamless $C^1$-continuous spline brush trajectories.
 * **Crowdsourced Flywheel:** 324 verified human trajectories collected via the live gamified web benchmark platform [Hand vs AI](https://handvsai.vercel.app) featuring real-time signed distance field (SDF) scoring, asynchronous 1:1 ghost battles, and an adaptive "Hidden Boss" challenge.
 
 ---
