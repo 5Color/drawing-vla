@@ -185,7 +185,7 @@ While the visuomotor policy operates on downsampled $128 \times 128$ raster obse
   \caption{Unified Multi-Class and Dual-Mode evaluation across Guided Tracing Mode ($O_t^{(1)} = I_{\text{target}}$) and Blank-Canvas Mode ($O_t^{(1)} = \mathbf{0}$).}
   \label{tab:multiclass_dual}
   \small
-  \resizebox{\textwidth}{!}{
+  \resizebox{0.96\textwidth}{!}{
   \begin{tabular}{llccccccc}
     \toprule
     \textbf{Task Class} & \textbf{Operating Mode} & \textbf{Visual Goal ($O_t^{(1)}$)} & \textbf{Prompt ($c$)} & \textbf{Coverage} & \textbf{Precision} & \textbf{F1 Score} & \textbf{SDF Error} & \textbf{Smoothness (Turn / Wave)} \\
@@ -214,7 +214,7 @@ As reported in Table~\ref{tab:multiclass_dual} and Figure~\ref{fig:rollout}(d), 
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\columnwidth]{figures/fig3_edge_latency.png}
+  \includegraphics[width=0.88\columnwidth]{figures/fig3_edge_latency.png}
   \caption{\textbf{Edge inference latency per 16-step chunk across hardware backends.} On an Intel Core Ultra 5 325 processor, 4-thread CPU execution achieves \textbf{6.11\,ms} (163 chunks/sec), outperforming integrated XPU graphics (14.15\,ms) and remaining well below the 16.67\,ms (60\,Hz) real-time control budget.}
   \label{fig:latency}
 \end{figure}
@@ -223,8 +223,10 @@ As reported in Table~\ref{tab:multiclass_dual} and Figure~\ref{fig:rollout}(d), 
   \centering
   \caption{Inference latency and throughput on an Intel Core Ultra 5 325 edge processor (Batch Size = 1, $K=16$).}
   \label{tab:edge}
-  \small
-  \resizebox{\columnwidth}{!}{
+  \footnotesize
+  \renewcommand{\arraystretch}{0.95}
+  \setlength{\tabcolsep}{3.5pt}
+  \resizebox{0.92\columnwidth}{!}{
   \begin{tabular}{llcc}
     \toprule
     \textbf{Hardware Device} & \textbf{Backend} & \textbf{Latency / Chunk} & \textbf{Throughput} \\
@@ -264,7 +266,7 @@ A central question in visuomotor policy evaluation is whether the model function
   \caption{Quantitative comparison under spatial perturbations at $t=150$ between Drawing-VLA and Open-Loop Replay.}
   \label{tab:perturbation}
   \small
-  \resizebox{\columnwidth}{!}{
+  \resizebox{0.92\columnwidth}{!}{
   \begin{tabular}{lcccc}
     \toprule
     \textbf{Policy / Condition} & \textbf{Perturbation} & \textbf{Coverage} & \textbf{Precision} & \textbf{F1 Score} \\
