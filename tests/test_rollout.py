@@ -1,5 +1,7 @@
 """롤아웃 루프(Temporal Ensembling 포함)와 매끈함 지표 확인 — 가짜 정책으로 빠르게. python -m unittest tests.test_rollout"""
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "train"))
 
 import rollout_eval as R  # noqa: E402
+from dataset import encode_png_gray  # noqa: E402
 
 
 class LinePolicy:
@@ -54,6 +57,24 @@ class TestEnsembleRollout(unittest.TestCase):
         self.assertLess(a["wave_deg"], 0.5)
         self.assertGreater(z["wave_deg"], a["wave_deg"] * 10)
         self.assertLess(R.smoothness(zig, display=True)["wave_deg"], z["wave_deg"])   # 붓 렌더러 다듬기 후
+
+    def test_load_target_falls_back_to_targets_128_without_data_raw(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp_root = Path(td)
+            sample = np.zeros((R.OBS_SIZE, R.OBS_SIZE), np.uint8)
+            sample[10:20, 10:20] = 255
+            (tmp_root / "targets_128.json").write_text(
+                json.dumps({"apple": encode_png_gray(sample)}),
+                encoding="utf-8",
+            )
+            ckpt = {"val_files": ["demo_apple_000.json"]}
+            tgt, human, traj, s_human, ref_path = R._load_target_and_human_ref(ckpt, "apple", root=tmp_root)
+            self.assertEqual(tgt.shape, (R.OBS_SIZE, R.OBS_SIZE))
+            self.assertGreater(int(tgt.max()), 0)
+            self.assertIsNone(human)
+            self.assertIsNone(traj)
+            self.assertIsNone(s_human)
+            self.assertIsNone(ref_path)
 
 
 if __name__ == "__main__":

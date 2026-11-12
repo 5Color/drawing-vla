@@ -26,22 +26,28 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "collector" / "index.html"
+TEMPLATES_JSON = ROOT / "templates.json"
 UNITS = 512.0
 STROKE_COLORS = [(255, 90, 90), (255, 200, 60), (90, 220, 120), (80, 170, 255), (210, 120, 255), (255, 255, 255)]
 
 
 # ---------------------------------------------------------------------------
-# 템플릿: index.html의 TEMPLATES를 그대로 파싱 (정의는 한 곳에만)
+# 템플릿: index.html의 TEMPLATES를 그대로 파싱 (없으면 templates.json 폴백)
 # ---------------------------------------------------------------------------
 def load_templates(html_path: Path = INDEX_HTML) -> dict[str, list[str]]:
-    src = html_path.read_text(encoding="utf-8")
-    block = src[src.index("const TEMPLATES"):]
-    block = block[: block.index("\n};") + 3]
-    out = {}
-    # paths 배열만 (뒤에 오는 order: [...] 안내 문구는 제외). SVG path 문자열에는 ']'가 없다.
-    for m in re.finditer(r"(\w+):\s*\{\s*label:\s*'[^']*',\s*paths:\s*\[(.*?)\]", block, re.S):
-        out[m.group(1)] = re.findall(r"'([^']+)'", m.group(2))
-    return out
+    if html_path.exists():
+        src = html_path.read_text(encoding="utf-8")
+        block = src[src.index("const TEMPLATES"):]
+        block = block[: block.index("\n};") + 3]
+        out = {}
+        # paths 배열만 (뒤에 오는 order: [...] 안내 문구는 제외). SVG path 문자열에는 ']'가 없다.
+        for m in re.finditer(r"(\w+):\s*\{\s*label:\s*'[^']*',\s*paths:\s*\[(.*?)\]", block, re.S):
+            out[m.group(1)] = re.findall(r"'([^']+)'", m.group(2))
+        return out
+    if TEMPLATES_JSON.exists():
+        data = json.loads(TEMPLATES_JSON.read_text(encoding="utf-8"))
+        return {k: v["paths"] for k, v in data.items()}
+    raise FileNotFoundError(f"Neither {html_path} nor {TEMPLATES_JSON} found")
 
 
 def _arc(p0, rx, ry, phi, fa, fs, p1, n=48):

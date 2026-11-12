@@ -242,6 +242,47 @@ def panel(img: Image.Image, title: str, sub: str = "") -> Image.Image:
     return out
 
 
+def _load_target_and_human_ref(
+    ckpt: dict,
+    target_name: str,
+    root: Path | None = None,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, dict | None, Path | None]:
+    """목표 도안(128x128)과 선택적 검증용 사람 시연을 로드한다.
+
+    `data/raw`에 시연 JSON이 있으면 검증 에피소드 기준 도안과 사람 시연을 반환하고,
+    공개 클론 환경처럼 `data/raw`가 없으면 저장소 루트의 `targets_128.json`으로 폴백한다.
+    """
+    root = ROOT if root is None else root
+    raw_dir = root / "data" / "raw"
+    val_candidates = [f for f in ckpt.get("val_files", []) if f"demo_{target_name}_" in f]
+    ref_path: Path | None = None
+    if val_candidates and (raw_dir / val_candidates[0]).exists():
+        ref_path = raw_dir / val_candidates[0]
+    elif raw_dir.exists():
+        raw_candidates = sorted(raw_dir.glob(f"demo_{target_name}_*.json"))
+        if raw_candidates:
+            ref_path = raw_candidates[0]
+        elif ckpt.get("val_files") and (raw_dir / ckpt["val_files"][0]).exists():
+            ref_path = raw_dir / ckpt["val_files"][0]
+
+    if ref_path is not None and ref_path.exists():
+        ref = json.loads(ref_path.read_text(encoding="utf-8"))
+        target = decode_png_gray(ref["target_128_png"])
+        human_traj = np.asarray(ref["trajectory"], np.float32)
+        human = render_canvas(human_traj)
+        return target, human, human_traj, match_scores(human, target), ref_path
+
+    targets_path = root / "targets_128.json"
+    if targets_path.exists():
+        targets_map = json.loads(targets_path.read_text(encoding="utf-8"))
+        if target_name in targets_map:
+            return decode_png_gray(targets_map[target_name]), None, None, None, None
+
+    raise FileNotFoundError(
+        f"Could not find target '{target_name}' in '{raw_dir}' or '{targets_path}'."
+    )
+
+
 # ---------------------------------------------------------------------------
 def main() -> int:
     dev = pick_device()  # 콘솔 첫 줄
@@ -304,18 +345,9 @@ def main() -> int:
     if task_id is not None:
         print(f"[task] target='{target_name}' -> task_id={task_id} (known tasks: {list(task_map.keys())})", flush=True)
 
-    # 목표 도안(브라우저가 렌더한 128px)과 비교용 사람 시연(검증셋, 학습에 안 쓰인 에피소드)
-    val_candidates = [f for f in ckpt.get("val_files", []) if f"demo_{target_name}_" in f]
-    if val_candidates:
-        ref_path = ROOT / "data" / "raw" / val_candidates[0]
-    else:
-        raw_candidates = sorted((ROOT / "data" / "raw").glob(f"demo_{target_name}_*.json"))
-        ref_path = raw_candidates[0] if raw_candidates else ROOT / "data" / "raw" / ckpt["val_files"][0]
-    ref = json.loads(ref_path.read_text(encoding="utf-8"))
-    target = decode_png_gray(ref["target_128_png"])
+    # 목표 도안(브라우저가 렌더한 128px)과 비교용 사람 시연(없으면 targets_128.json 폴백)
+    target, human, human_traj, s_human, ref_path = _load_target_and_human_ref(ckpt, target_name)
     rollout_target = np.zeros_like(target) if args.blank else target
-    human = render_canvas(np.asarray(ref["trajectory"], np.float32))
-    s_human = match_scores(human, target)
 
     runs = []
     for seed in range(n_seeds):
@@ -343,12 +375,16 @@ def main() -> int:
         print(f"[speed]   추론 {ms.mean():.1f} ms/호출 (p95 {np.percentile(ms, 95):.1f}) · {qf}스텝마다 호출 →"
               f" 스텝당 {per_step:.3f} ms = 기준(12스텝마다)의 {per_step / base:.1f}배"
               f" · 최대 {1000 / per_step:.0f} 스텝/초 ({dev})", flush=True)
-    sm_h, sm_hd = smoothness(np.asarray(ref["trajectory"], np.float32)), smoothness(np.asarray(ref["trajectory"], np.float32), display=True)
-    print(f"[smooth]  사람시연 꺾임 {sm_h['turn_deg']:.2f}° 물결 {sm_h['wave_deg']:.2f}°"
-          f" (화면 {sm_hd['turn_deg']:.2f}°/{sm_hd['wave_deg']:.2f}°)", flush=True)
-    print(f"[score]   사람시연 커버리지 {s_human['coverage']:.1%}  정밀도 {s_human['precision']:.1%}  F1 {s_human['f1']:.3f}"
-          f"  ({ref_path.name}, 검증셋)", flush=True)
+    if human_traj is not None and s_human is not None and ref_path is not None:
+        sm_h, sm_hd = smoothness(human_traj), smoothness(human_traj, display=True)
+        print(f"[smooth]  사람시연 꺾임 {sm_h['turn_deg']:.2f}° 물결 {sm_h['wave_deg']:.2f}°"
+              f" (화면 {sm_hd['turn_deg']:.2f}°/{sm_hd['wave_deg']:.2f}°)", flush=True)
+        print(f"[score]   사람시연 커버리지 {s_human['coverage']:.1%}  정밀도 {s_human['precision']:.1%}  F1 {s_human['f1']:.3f}"
+              f"  ({ref_path.name}, 검증셋)", flush=True)
+    else:
+        print(f"[info]    로컬 data/raw 시연 없음 → targets_128.json에서 '{target_name}' 도안 로드", flush=True)
 
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     r0 = runs[0]
     executed, history, reason, s_roll, n_strokes = r0["executed"], r0["history"], r0["reason"], r0["score"], r0["strokes"]
     final = history[-1]["canvas"]
@@ -371,10 +407,13 @@ def main() -> int:
         panel(to_rgb(final), p2_title,
               f"cov {s_roll['coverage']:.0%}  prec {s_roll['precision']:.0%}  F1 {s_roll['f1']:.2f}  · {n_strokes} strokes"),
         panel(Image.fromarray(overlay), "overlay", "red = GT, cyan = rollout" if args.blank else "red = target, cyan = rollout"),
-        panel(to_rgb(human), "human demo (val, unseen)",
-              f"cov {s_human['coverage']:.0%}  prec {s_human['precision']:.0%}  F1 {s_human['f1']:.2f}"),
     ]
-    sheet = Image.new("RGB", (TILE * 4 + 30, TILE + 52), (20, 20, 26))
+    if human is not None and s_human is not None:
+        panels.append(
+            panel(to_rgb(human), "human demo (val, unseen)",
+                  f"cov {s_human['coverage']:.0%}  prec {s_human['precision']:.0%}  F1 {s_human['f1']:.2f}")
+        )
+    sheet = Image.new("RGB", (TILE * len(panels) + 10 * (len(panels) - 1), TILE + 52), (20, 20, 26))
     for i, p in enumerate(panels):
         sheet.paste(p, (i * (TILE + 10), 0))
     png = OUT_DIR / f"rollout_{name}_final.png"

@@ -123,7 +123,7 @@ python -m unittest tests.test_scoring_b tests.test_brush tests.test_dataset test
 
 ### 4. Training and Closed-Loop Rollout
 
-Pretrained model checkpoints are hosted on [GitHub Releases v1.0.0](https://github.com/5Color/drawing-vla/releases/tag/v1.0.0). Download the weights before evaluating:
+Pretrained model checkpoints are hosted on [GitHub Releases v1.0.0](https://github.com/5Color/drawing-vla/releases/tag/v1.0.0). Rollout evaluation works out of the box using the bundled `targets_128.json` templates—no external dataset download is required:
 
 ```bash
 # 1) Download pretrained ACT policy checkpoint
@@ -133,9 +133,15 @@ curl -L -o outputs/apple_vla_policy.pth https://github.com/5Color/drawing-vla/re
 # 2) Evaluate closed-loop rollout with temporal ensembling and organic brush rendering
 python train/rollout_eval.py --ckpt outputs/apple_vla_policy.pth --exec-steps 12 --ensemble --brush
 
-# 3) (Optional) Train unified dual-mode ACT policy from scratch
+# 3) (Optional) Verify dataset pipeline (uses synthetic demo if data/raw is empty)
+python train/dataset.py --resample-step 0.004
+
+# 4) (Optional) Train unified dual-mode ACT policy on your own data/raw/demo_<target>_*.json episodes
 python train/train_policy.py --head transformer --epochs 60 --goal-drop 0.5
 ```
+
+> [!NOTE]
+> **Dataset Availability:** Raw crowdsourced human demonstrations are not bundled in the public repository to protect contributor privacy. Pretrained checkpoints, scoring/rendering utilities, and canonical 128×128 target tensors (`targets_128.json`) are all included for full rollout reproduction, and `train/train_policy.py` trains directly on any demonstration JSONs placed in `data/raw/` following the schema in `train/dataset.py`.
 
 ---
 

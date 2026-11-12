@@ -113,7 +113,7 @@ python -m unittest tests.test_scoring_b tests.test_brush tests.test_dataset test
 ```
 
 ### 4. 모델 가중치 다운로드 및 롤아웃 평가
-학습된 모델 체크포인트는 [GitHub Releases v1.0.0](https://github.com/5Color/drawing-vla/releases/tag/v1.0.0)에 공개되어 있습니다:
+학습된 모델 체크포인트는 [GitHub Releases v1.0.0](https://github.com/5Color/drawing-vla/releases/tag/v1.0.0)에 공개되어 있으며, 저장소에 포함된 `targets_128.json` 도안을 이용해 별도 데이터셋 없이도 즉시 롤아웃 평가가 가능합니다:
 ```bash
 # 1) 사전 학습 가중치 다운로드
 mkdir -p outputs
@@ -122,7 +122,12 @@ curl -L -o outputs/apple_vla_policy.pth https://github.com/5Color/drawing-vla/re
 # 2) 폐루프 롤아웃 평가 (붓 렌더링 및 Temporal Ensembling 포함)
 python train/rollout_eval.py --ckpt outputs/apple_vla_policy.pth --exec-steps 12 --ensemble --brush
 
-# 3) (선택) 데이터셋 검증 및 직접 재학습
-python train/dataset.py --resample-step 0.005
+# 3) (선택) 데이터셋 파이프라인 검증 (data/raw가 비어 있으면 합성 시연으로 자동 검증)
+python train/dataset.py --resample-step 0.004
+
+# 4) (선택) data/raw/demo_<target>_*.json 시연 데이터로 직접 재학습
 python train/train_policy.py --head transformer --epochs 60 --goal-drop 0.5
 ```
+
+> [!NOTE]
+> **데이터셋 공개 범위:** 크라우드소싱 참여자 프라이버시 보호를 위해 원시 시연 JSON은 공개 저장소에 포함되어 있지 않습니다. 사전학습 가중치·평가 엔진·도안 텐서(`targets_128.json`)가 모두 공개되어 있어 롤아웃 재현이 가능하며, `train/dataset.py` 스키마에 맞춘 시연 파일을 `data/raw/`에 넣으면 `train/train_policy.py`로 바로 학습할 수 있습니다.
