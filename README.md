@@ -46,7 +46,7 @@ Autoregressive sequence models for vector sketch generation (e.g., SketchRNN) ty
 > **Why the Single-Step Baseline Fails: A Structural Proof, Not a Parameter Deficit**  
 > The single-step baseline (`MLP Baseline (v5b)`) is not an under-tuned strawman—it shares the **exact same convolutional visual encoder backbone** and dual-channel canvas inputs as Drawing-VLA. Its failure stems from the fundamental mathematical limitation of **Markovian single-step behavioral cloning under multimodal human demonstrations**:
 > 1. **Mode Averaging across Divergent Demonstrations:** When human demonstrations diverge (e.g., drawing clockwise vs. counter-clockwise, or transitioning to stem vs. body), a single-step Markovian policy averages conflicting velocity vectors. This gradient cancellation forces the pen into an artificial mean trajectory that drags the pen continuously across boundaries. Scaling parameter capacity cannot resolve this causal ambiguity.
-> 2. **Compounding Compounding Drift:** Single-step autoregression accumulates errors quadratically ($O(\epsilon T^2)$) along the trajectory horizon without future waypoint coordination.
+> 2. **Compounding Drift:** Single-step autoregression accumulates errors quadratically ($O(\epsilon T^2)$) along the trajectory horizon without future waypoint coordination.
 > 3. **The Action Chunking Solution ($K=16, w_{\text{up}}=10.0$):** By predicting a chunk of $K = 16$ future waypoints conditioned on visual canvas state and proprioception, coupled with a $10\times$ minority-class pen-up loss weighting, Drawing-VLA establishes a coherent multi-step planning horizon that decouples discrete stroke transitions cleanly without compounding drift.
 
 ### Robustness to Real-Time Spatial Perturbations (+20px Displacement)
